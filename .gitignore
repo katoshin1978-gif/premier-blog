@@ -1,0 +1,13 @@
+.env
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.claude/
+log/
+google_indexing_key.json.json
+premier-blog-theme.zip
+wordpress/
+style.zip
+=6.0.0

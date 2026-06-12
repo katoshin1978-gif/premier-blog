@@ -1,0 +1,33 @@
+sources:
+  whitelist:
+    - bbc.com/sport
+    - theguardian.com/football
+    - skysports.com/football
+    - theathletic.com
+    - football365.com
+    - 90min.com
+    - espn.com/soccer
+
+search:
+  max_results: 8
+  max_quote_words: 100
+
+topic:
+  mode: reddit           # "reddit" or "fixed"
+  reddit_limit: 5
+  fixed_themes:
+    - "Premier League latest news"
+    - "Premier League transfer news"
+    - "Premier League match results"
+    - "Premier League standings"
+    - "Premier League manager news"
+
+article:
+  language: ja
+  min_sources: 3
+  max_sources: 8
+
+wordpress:
+  url: "https://your-wordpress-site.com"
+  status: draft
+  category_id: 1        # WordPressのカテゴリID（プレミアリーグ用）

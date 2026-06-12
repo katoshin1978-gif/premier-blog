@@ -1,0 +1,52 @@
+name: Premier Blog Auto Post
+
+on:
+  schedule:
+    - cron: '0 22 * * *'  # 毎日 22:00 UTC = 翌日 7:00 JST
+  workflow_dispatch:       # 手動実行ボタン
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+      REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+      WP_URL: ${{ secrets.WP_URL }}
+      WP_USERNAME: ${{ secrets.WP_USERNAME }}
+      WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+      PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+      BING_INDEXNOW_KEY: ${{ secrets.BING_INDEXNOW_KEY }}
+      AMAZON_ASSOCIATE_ID: ${{ secrets.AMAZON_ASSOCIATE_ID }}
+      RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
+      RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
+      RAKUTEN_WS_AFFILIATE_ID: ${{ secrets.RAKUTEN_WS_AFFILIATE_ID }}
+      SSL_VERIFY: "true"
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存パッケージインストール
+        run: pip install -r requirements.txt
+
+      - name: main.py 実行
+        run: python main.py
+
+      - name: processed.db をコミット
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add processed.db
+          git diff --staged --quiet || git commit -m "chore: update processed.db [skip ci]"
+          git push

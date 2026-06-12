@@ -1,0 +1,109 @@
+sources:
+  whitelist:
+  - bbc.com/sport
+  - theguardian.com/football
+  - skysports.com/football
+  - theathletic.com
+  - football365.com
+  - 90min.com
+  - metro.co.uk/sport/football
+  - thesun.co.uk/sport/football
+  - goal.com/en-gb/news
+  - espn.com/soccer
+  - football-italia.net
+  - bundesliga.com/en/news
+  - marca.com/en/football
+  - telegraph.co.uk/football
+  - standard.co.uk/sport/football
+  - as.com/en/football
+  - calciomercato.com
+  - transfermarkt.com
+  - eurosport.com/football
+  # ドイツ
+  - kicker.de/news/fussball
+  # イタリア
+  - gazzetta.it/calcio
+  - corrieredellosport.it/calcio
+  # フランス
+  - lequipe.fr/Football
+  # スペイン
+  - mundodeportivo.com/futbol
+  - sport.es/es/futbol
+search:
+  max_results: 10
+  max_context_words: 500
+  max_quote_words: 100
+topic:
+  mode: rss
+  rss_limit: 20
+  rss_feeds:
+  - https://feeds.bbci.co.uk/sport/football/premier-league/rss.xml
+  - https://www.skysports.com/rss/12040
+  - https://www.theguardian.com/football/premierleague/rss
+  - https://www.90min.com/feed
+  - https://www.espn.com/espn/rss/soccer/news
+  - https://www.football-italia.net/feed
+  - https://metro.co.uk/sport/football/feed/
+  - https://www.theguardian.com/profile/fabrizio-romano/rss
+  nitter_accounts:
+  - FabrizioRomano
+  - centredvils
+  - indykalia
+  man_united_boost: 2.5
+  trending_limit: 10
+  reddit_limit: 5
+  fixed_themes:
+  - Manchester United latest news
+  - Premier League transfer news
+  - Premier League match results
+  - Premier League latest news
+  - Premier League manager news
+topic_transfers:
+  # Twitter（Nitter）経由で移籍トレンドを取得するアカウント
+  nitter_accounts:
+  - FabrizioRomano
+  - David_Ornstein
+  - DiMarzio
+  # 補完用 RSS（Nitter 失敗時）
+  rss_feeds:
+  - https://www.football-italia.net/feed
+  - https://www.90min.com/feed
+  - https://www.theguardian.com/football/transfers/rss
+  exclude_man_united: true   # Man United 関連は main パイプラインに任せる
+  limit: 10
+  count: 2                   # 1回の実行で生成する移籍記事数
+
+topic_europe:
+  # Twitter（Nitter）経由で欧州トレンドを取得するアカウント
+  nitter_accounts:
+  - FabrizioRomano
+  - DiMarzio
+  # 欧州フットボール RSS
+  rss_feeds:
+  - https://www.football-italia.net/feed
+  - https://www.espn.com/espn/rss/soccer/news
+  - https://www.bundesliga.com/en/bundesliga/news.rss
+  - https://www.90min.com/feed
+  - https://www.kicker.de/news/fussball/bundesliga/rss.xml
+  - https://www.gazzetta.it/dynamic-feed/rss/section/calcio.xml
+  - https://www.lequipe.fr/rss/actu_rss_Football.xml
+  - https://www.mundodeportivo.com/rss/futbol.xml
+  limit: 15
+  count: 2                   # 1回の実行で生成する欧州記事数
+
+article:
+  language: ja
+  min_sources: 3
+  max_sources: 8
+wordpress:
+  url: https://katoshin.fc2.page
+  status: draft
+  category_id: 4
+  category_ids:
+    match-reviews: 4
+    tactics: 5
+    united: 6
+    transfers: 7
+    europe: 8
+    data: 9
+    column: 10
