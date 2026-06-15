@@ -91,6 +91,20 @@ topic_europe:
   limit: 15
   count: 2                   # 1回の実行で生成する欧州記事数
 
+topic_worldcup:
+  players:
+  - Bruno Fernandes
+  - Rasmus Hojlund
+  - Kobbie Mainoo
+  - Lisandro Martinez
+  - Alejandro Garnacho
+  - Diogo Dalot
+  - Andre Onana
+  - Mason Mount
+  - Luke Shaw
+  limit: 10
+  count: 2                   # 1回の実行で生成するWC記事数（0で無効化）
+
 article:
   language: ja
   min_sources: 3

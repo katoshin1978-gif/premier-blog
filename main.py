@@ -155,12 +155,18 @@ def extract_player_name(title: str) -> str | None:
     return ' '.join(name_parts[:3]).lower() if len(name_parts) >= 2 else None
 
 
-def is_player_processed_today(conn: sqlite3.Connection, player_key: str, pipeline: str) -> bool:
+def is_player_processed_today(conn: sqlite3.Connection, player_key: str, pipeline: str | None = None) -> bool:
     today = datetime.now().strftime('%Y-%m-%d')
-    row = conn.execute(
-        "SELECT id FROM player_dedup WHERE player_key=? AND pipeline=? AND created_date=?",
-        (player_key, pipeline, today),
-    ).fetchone()
+    if pipeline:
+        row = conn.execute(
+            "SELECT id FROM player_dedup WHERE player_key=? AND pipeline=? AND created_date=?",
+            (player_key, pipeline, today),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id FROM player_dedup WHERE player_key=? AND created_date=?",
+            (player_key, today),
+        ).fetchone()
     return row is not None
 
 
@@ -461,13 +467,60 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
                 print(f"[main] 欧州: 全トピックで記事収集失敗")
                 break
             used_hashes.add(topic_hash(topic))
+
+            # パイプライン横断で同日同選手スキップ
+            player_key = extract_player_name(topic.title)
+            if player_key and is_player_processed_today(conn, player_key):
+                print(f"[main] 欧州: 選手重複スキップ ({player_key})")
+                continue
+
             print(f"[main] 欧州採用トピック: {topic.title}")
             try:
-                _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category="europe")
-                europe_success += 1
+                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category="europe")
+                if ok and player_key:
+                    mark_player_processed(conn, player_key, "europe")
+                if ok:
+                    europe_success += 1
             except Exception as e:
                 print(f"[main] 欧州記事エラー: {e}")
         print(f"[main] 欧州記事完了: {europe_success}/{count_europe} 件")
+
+    # ===== ワールドカップ MU選手記事パイプライン =====
+    count_wc = cfg.get("topic_worldcup", {}).get("count", 2)
+    if count_wc > 0 and not topic_override:
+        print("\n" + "=" * 60)
+        print(f"[main] WC記事を {count_wc} 件生成します（MU選手のW杯活躍）")
+        print("=" * 60)
+        from topic_finder import find_topics_worldcup
+        wc_topics = find_topics_worldcup(CONFIG_PATH)
+        wc_unprocessed = [t for t in wc_topics if not is_processed(conn, t) and topic_hash(t) not in used_hashes]
+        wc_success = 0
+        for i in range(count_wc):
+            remaining = [t for t in wc_unprocessed if topic_hash(t) not in used_hashes]
+            if not remaining:
+                print(f"[main] WCトピックなし。{wc_success}/{count_wc} 記事生成済み")
+                break
+            topic, search_results, articles = _find_valid_topic(remaining, context="worldcup")
+            if topic is None:
+                print(f"[main] WC: 全トピックで記事収集失敗")
+                break
+            used_hashes.add(topic_hash(topic))
+
+            player_key = extract_player_name(topic.title)
+            if player_key and is_player_processed_today(conn, player_key):
+                print(f"[main] WC: 選手重複スキップ ({player_key})")
+                continue
+
+            print(f"[main] WC採用トピック: {topic.title}")
+            try:
+                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category="united")
+                if ok and player_key:
+                    mark_player_processed(conn, player_key, "worldcup")
+                if ok:
+                    wc_success += 1
+            except Exception as e:
+                print(f"[main] WC記事エラー: {e}")
+        print(f"[main] WC記事完了: {wc_success}/{count_wc} 件")
 
     # 試合分析記事（dry_run 時はスキップ）
     if not dry_run:

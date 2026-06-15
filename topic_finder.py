@@ -499,6 +499,58 @@ def find_topics_europe(config_path: str = "config.yaml") -> list[Topic]:
     return deduped[:limit]
 
 
+def find_topics_worldcup(config_path: str = "config.yaml") -> list[Topic]:
+    """ワールドカップ出場中のマンチェスター・ユナイテッド選手の活躍トピックを取得"""
+    from tavily import TavilyClient
+
+    config = load_config(config_path)
+    cfg = config.get("topic_worldcup", {})
+    limit = cfg.get("limit", 10)
+    players = cfg.get("players", [
+        "Bruno Fernandes", "Rasmus Hojlund", "Kobbie Mainoo",
+        "Lisandro Martinez", "Alejandro Garnacho", "Diogo Dalot",
+        "Andre Onana", "Mason Mount", "Luke Shaw",
+    ])
+
+    whitelist = config["sources"]["whitelist"]
+    include_domains = []
+    for entry in whitelist:
+        domain = entry.split("/")[0]
+        if domain not in include_domains:
+            include_domains.append(domain)
+
+    client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+    if not _SSL_VERIFY:
+        client.session.verify = False  # type: ignore[attr-defined]
+
+    queries = [f"{p} World Cup 2026" for p in players[:5]]
+    queries.append("Manchester United players World Cup 2026")
+
+    seen: set[str] = set()
+    topics: list[Topic] = []
+
+    for query in queries:
+        try:
+            resp = client.search(query, search_depth="basic", max_results=5, include_domains=include_domains)
+            for item in resp.get("results", []):
+                url = item.get("url", "")
+                title = item.get("title", "").strip()
+                if not title or not url or not _is_article_url(url) or not _is_article_title(title):
+                    continue
+                normalized = re.sub(r"\s+", " ", title.lower())[:40]
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                score = int(item.get("score", 0.0) * 10000)
+                topics.append(Topic(title=title, url=url, score=score))
+        except Exception as e:
+            print(f"[topic_finder] WC クエリ失敗 '{query}': {e}")
+
+    topics.sort(key=lambda t: t.score, reverse=True)
+    print(f"[topic_finder] WCトピック: {len(topics)} 件取得")
+    return topics[:limit]
+
+
 def find_topics(config_path: str = "config.yaml") -> list[Topic]:
     config = load_config(config_path)
     topic_cfg = config.get("topic", {})
