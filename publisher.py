@@ -312,39 +312,25 @@ _AFFILIATE_CONFIG: dict[int, list[dict]] = {
 }
 
 
-def _fetch_rakuten_product(keyword: str, rakuten_id: str, app_id: str) -> dict | None:
-    """楽天商品検索。企業プロキシ回避のためWordPressサーバー経由でAPIを呼ぶ"""
-    ws_aff_id = os.environ.get("RAKUTEN_WS_AFFILIATE_ID", "")
-    base_url = os.environ.get("WP_URL", "").rstrip("/")
-    if not base_url:
+def _fetch_pexels_image_url(keyword: str) -> str | None:
+    """Pexelsからキーワードに関連する画像URLを取得（カード用サムネイル）"""
+    api_key = os.environ.get("PEXELS_API_KEY", "")
+    if not api_key:
         return None
     try:
         r = requests.get(
-            f"{base_url}/wp-json/premier-blog/v1/rakuten-product",
-            params={
-                "applicationId": "becf4164-d48c-47bd-b61f-8fbdb1091f8c",
-                "accessKey": app_id,
-                "affiliateId": ws_aff_id,
-                "keyword": keyword.replace("+", " "),
-            },
-            headers=_get_auth_header(),
-            timeout=20,
+            "https://api.pexels.com/v1/search",
+            headers={"Authorization": api_key},
+            params={"query": keyword, "per_page": 5, "orientation": "landscape"},
+            timeout=10,
             verify=_SSL_VERIFY,
         )
         data = r.json()
-        items = data.get("Items", [])
-        if not items:
-            return None
-        item = items[0]["Item"]
-        images = item.get("mediumImageUrls", [])
-        return {
-            "name": item["itemName"][:50],
-            "price": item["itemPrice"],
-            "image": images[0]["imageUrl"] if images else None,
-            "url": item.get("affiliateUrl") or item["itemUrl"],
-        }
-    except Exception as e:
-        print(f"[publisher] 楽天商品取得失敗 ({keyword}): {e}")
+        photos = data.get("photos", [])
+        if photos:
+            return photos[0]["src"]["medium"]
+        return None
+    except Exception:
         return None
 
 
@@ -370,26 +356,24 @@ def _aff_card_icon(url: str, icon: str, brand: str, brand_color: str, title: str
     )
 
 
-def _aff_card_product(url: str, image_url: str, brand: str, brand_color: str,
-                      name: str, price: int, cta: str) -> str:
-    """実商品画像付きアフィリエイトカード"""
-    price_str = f"¥{price:,}"
-    name_safe = name[:40] + ("…" if len(name) > 40 else "")
+def _aff_card_image(url: str, image_url: str, brand: str, brand_color: str,
+                    title: str, desc: str, cta: str) -> str:
+    """画像付きアフィリエイトカード（価格なし）"""
     return (
         f'<a href="{url}" target="_blank" rel="nofollow noopener sponsored" '
         f'style="display:flex;align-items:center;gap:14px;padding:14px 16px;'
         f'border:1px solid #e0e0e0;border-radius:8px;background:#fff;'
         f'text-decoration:none;color:inherit;">'
-        f'<div style="flex-shrink:0;width:72px;height:72px;border-radius:6px;'
-        f'overflow:hidden;background:#f5f5f5;display:flex;align-items:center;justify-content:center;">'
-        f'<img src="{image_url}" width="72" height="72" '
-        f'style="object-fit:contain;width:100%;height:100%;" alt="{name_safe}" loading="lazy">'
+        f'<div style="flex-shrink:0;width:80px;height:60px;border-radius:6px;'
+        f'overflow:hidden;background:#f5f5f5;">'
+        f'<img src="{image_url}" width="80" height="60" '
+        f'style="object-fit:cover;width:100%;height:100%;" alt="{title}" loading="lazy">'
         f'</div>'
         f'<div style="flex:1;min-width:0;">'
         f'<div style="font-size:10px;font-weight:700;letter-spacing:.1em;color:{brand_color};margin-bottom:2px;">{brand}</div>'
-        f'<div style="font-size:13px;font-weight:700;color:#111;margin-bottom:4px;'
-        f'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">{name_safe}</div>'
-        f'<div style="font-size:14px;font-weight:700;color:#e44000;">{price_str}</div>'
+        f'<div style="font-size:14px;font-weight:700;color:#111;margin-bottom:3px;'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{title}</div>'
+        f'<div style="font-size:12px;color:#666;">{desc}</div>'
         f'</div>'
         f'<div style="flex-shrink:0;font-size:12px;font-weight:700;color:#fff;'
         f'background:{brand_color};padding:6px 12px;border-radius:20px;white-space:nowrap;">{cta}</div>'
@@ -440,7 +424,6 @@ def _suggest_affiliate_keywords(title: str, content_hint: str = "") -> list[str]
 def _build_affiliate_html(category_id: int, topic_title: str | None = None, content_hint: str = "") -> str:
     amazon_id  = os.environ.get("AMAZON_ASSOCIATE_ID", "")
     rakuten_id = os.environ.get("RAKUTEN_AFFILIATE_ID", "")
-    rakuten_app_id = os.environ.get("RAKUTEN_APP_ID", "")
     sptv_id    = os.environ.get("SPTV_AFFILIATE_ID", "")
     dazn_url   = os.environ.get("DAZN_AFFILIATE_URL", "")
     if not amazon_id and not rakuten_id and not sptv_id and not dazn_url:
@@ -448,7 +431,7 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
 
     # topic_titleが渡された場合はAIで動的キーワードを生成してrakutenカードに使う
     dynamic_items: list[dict] = []
-    if topic_title and rakuten_id and rakuten_app_id:
+    if topic_title and rakuten_id:
         kws = _suggest_affiliate_keywords(topic_title, content_hint)
         for kw in kws[:2]:
             dynamic_items.append({"label": kw, "kw": kw.replace(" ", "+"), "store": "rakuten"})
@@ -457,28 +440,33 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
         {"label": "サッカーグッズ", "kw": "サッカー+グッズ", "store": "amazon"},
     ])
 
+    pexels_key = os.environ.get("PEXELS_API_KEY", "")
+
     cards = []
     for item in items:
         if item["store"] == "amazon" and amazon_id:
             url = f"https://www.amazon.co.jp/s?k={item['kw']}&tag={amazon_id}"
-            cards.append(_aff_card_icon(
-                url, "🛒", "Amazon.co.jp", "#FF9900",
-                item["label"], "Amazonで最安値をチェック", "今すぐ見る"
-            ))
-        elif item["store"] == "rakuten" and rakuten_id:
-            # Application IDがあれば実商品画像を取得、なければフォールバック
-            product = None
-            if rakuten_app_id:
-                product = _fetch_rakuten_product(item["kw"], rakuten_id, rakuten_app_id)
-            if product and product.get("image"):
-                cards.append(_aff_card_product(
-                    product["url"], product["image"],
-                    "楽天市場", "#BF0000",
-                    product["name"], product["price"], "楽天で購入"
+            img = _fetch_pexels_image_url(item["kw"].replace("+", " ")) if pexels_key else None
+            if img:
+                cards.append(_aff_card_image(
+                    url, img, "Amazon.co.jp", "#FF9900",
+                    item["label"], "Amazonで最安値をチェック", "今すぐ見る"
                 ))
             else:
-                kw_encoded = item["kw"].replace("+", "%20")
-                url = f"https://hb.afl.rakuten.co.jp/ichiba/{rakuten_id}/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F{kw_encoded}%2F"
+                cards.append(_aff_card_icon(
+                    url, "🛒", "Amazon.co.jp", "#FF9900",
+                    item["label"], "Amazonで最安値をチェック", "今すぐ見る"
+                ))
+        elif item["store"] == "rakuten" and rakuten_id:
+            kw_encoded = item["kw"].replace("+", "%20")
+            url = f"https://hb.afl.rakuten.co.jp/ichiba/{rakuten_id}/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F{kw_encoded}%2F"
+            img = _fetch_pexels_image_url(item["kw"].replace("+", " ")) if pexels_key else None
+            if img:
+                cards.append(_aff_card_image(
+                    url, img, "楽天市場", "#BF0000",
+                    item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
+                ))
+            else:
                 cards.append(_aff_card_icon(
                     url, "🛒", "楽天市場", "#BF0000",
                     item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
