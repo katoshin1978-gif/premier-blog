@@ -312,8 +312,55 @@ _AFFILIATE_CONFIG: dict[int, list[dict]] = {
 }
 
 
+_RAKUTEN_ENDPOINT = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401"
+
+
+def _fetch_rakuten_product(keyword: str) -> dict | None:
+    """楽天商品検索（新エンドポイント、WEBアプリ型認証・直接呼び出し）"""
+    app_id  = os.environ.get("RAKUTEN_WS_APP_ID", "")
+    acc_key = os.environ.get("RAKUTEN_WS_ACCESS_KEY", "")
+    aff_id  = os.environ.get("RAKUTEN_WS_AFFILIATE_ID", "")
+    wp_url  = os.environ.get("WP_URL", "https://premier-blog.com").rstrip("/")
+    if not app_id or not acc_key:
+        return None
+    try:
+        params: dict = {
+            "format": "json",
+            "keyword": keyword.replace("+", " "),
+            "genreId": 0,
+            "applicationId": app_id,
+            "accessKey": acc_key,
+            "hits": 1,
+        }
+        if aff_id:
+            params["affiliateId"] = aff_id
+        r = requests.get(
+            _RAKUTEN_ENDPOINT,
+            params=params,
+            headers={"Referer": f"{wp_url}/", "Origin": wp_url},
+            timeout=15,
+            verify=_SSL_VERIFY,
+        )
+        r.encoding = "utf-8"
+        data = r.json()
+        items = data.get("Items", [])
+        if not items:
+            return None
+        item = items[0]["Item"]
+        images = item.get("mediumImageUrls", [])
+        return {
+            "name":  item["itemName"][:50],
+            "price": item["itemPrice"],
+            "image": images[0]["imageUrl"] if images else None,
+            "url":   item.get("affiliateUrl") or item["itemUrl"],
+        }
+    except Exception as e:
+        print(f"[publisher] 楽天商品取得失敗 ({keyword}): {e}")
+        return None
+
+
 def _fetch_pexels_image_url(keyword: str) -> str | None:
-    """Pexelsからキーワードに関連する画像URLを取得（カード用サムネイル）"""
+    """Pexelsからキーワードに関連する画像URLを取得（Amazon等のカード用）"""
     api_key = os.environ.get("PEXELS_API_KEY", "")
     if not api_key:
         return None
@@ -358,7 +405,7 @@ def _aff_card_icon(url: str, icon: str, brand: str, brand_color: str, title: str
 
 def _aff_card_image(url: str, image_url: str, brand: str, brand_color: str,
                     title: str, desc: str, cta: str) -> str:
-    """画像付きアフィリエイトカード（価格なし）"""
+    """画像付きアフィリエイトカード（価格なし・Pexels等の汎用画像用）"""
     return (
         f'<a href="{url}" target="_blank" rel="nofollow noopener sponsored" '
         f'style="display:flex;align-items:center;gap:14px;padding:14px 16px;'
@@ -374,6 +421,33 @@ def _aff_card_image(url: str, image_url: str, brand: str, brand_color: str,
         f'<div style="font-size:14px;font-weight:700;color:#111;margin-bottom:3px;'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{title}</div>'
         f'<div style="font-size:12px;color:#666;">{desc}</div>'
+        f'</div>'
+        f'<div style="flex-shrink:0;font-size:12px;font-weight:700;color:#fff;'
+        f'background:{brand_color};padding:6px 12px;border-radius:20px;white-space:nowrap;">{cta}</div>'
+        f'</a>'
+    )
+
+
+def _aff_card_product(url: str, image_url: str, brand: str, brand_color: str,
+                      name: str, price: int, cta: str) -> str:
+    """実商品画像・価格付きアフィリエイトカード（楽天API取得データ用）"""
+    price_str = f"¥{price:,}"
+    name_safe = name[:40] + ("…" if len(name) > 40 else "")
+    return (
+        f'<a href="{url}" target="_blank" rel="nofollow noopener sponsored" '
+        f'style="display:flex;align-items:center;gap:14px;padding:14px 16px;'
+        f'border:1px solid #e0e0e0;border-radius:8px;background:#fff;'
+        f'text-decoration:none;color:inherit;">'
+        f'<div style="flex-shrink:0;width:72px;height:72px;border-radius:6px;'
+        f'overflow:hidden;background:#f5f5f5;display:flex;align-items:center;justify-content:center;">'
+        f'<img src="{image_url}" width="72" height="72" '
+        f'style="object-fit:contain;width:100%;height:100%;" alt="{name_safe}" loading="lazy">'
+        f'</div>'
+        f'<div style="flex:1;min-width:0;">'
+        f'<div style="font-size:10px;font-weight:700;letter-spacing:.1em;color:{brand_color};margin-bottom:2px;">{brand}</div>'
+        f'<div style="font-size:13px;font-weight:700;color:#111;margin-bottom:4px;'
+        f'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">{name_safe}</div>'
+        f'<div style="font-size:14px;font-weight:700;color:#e44000;">{price_str}</div>'
         f'</div>'
         f'<div style="flex-shrink:0;font-size:12px;font-weight:700;color:#fff;'
         f'background:{brand_color};padding:6px 12px;border-radius:20px;white-space:nowrap;">{cta}</div>'
@@ -459,18 +533,27 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
                 ))
         elif item["store"] == "rakuten" and rakuten_id:
             kw_encoded = item["kw"].replace("+", "%20")
-            url = f"https://hb.afl.rakuten.co.jp/ichiba/{rakuten_id}/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F{kw_encoded}%2F"
-            img = _fetch_pexels_image_url(item["kw"].replace("+", " ")) if pexels_key else None
-            if img:
-                cards.append(_aff_card_image(
-                    url, img, "楽天市場", "#BF0000",
-                    item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
+            search_url = f"https://hb.afl.rakuten.co.jp/ichiba/{rakuten_id}/?pc=https%3A%2F%2Fsearch.rakuten.co.jp%2Fsearch%2Fmall%2F{kw_encoded}%2F"
+            # 実商品データ取得を優先、失敗時はPexels画像→アイコンの順でフォールバック
+            product = _fetch_rakuten_product(item["kw"])
+            if product and product.get("image"):
+                cards.append(_aff_card_product(
+                    product["url"] or search_url,
+                    product["image"], "楽天市場", "#BF0000",
+                    product["name"], product["price"], "楽天で購入"
                 ))
             else:
-                cards.append(_aff_card_icon(
-                    url, "🛒", "楽天市場", "#BF0000",
-                    item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
-                ))
+                img = _fetch_pexels_image_url(item["kw"].replace("+", " ")) if pexels_key else None
+                if img:
+                    cards.append(_aff_card_image(
+                        search_url, img, "楽天市場", "#BF0000",
+                        item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
+                    ))
+                else:
+                    cards.append(_aff_card_icon(
+                        search_url, "🛒", "楽天市場", "#BF0000",
+                        item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
+                    ))
         elif item["store"] == "sptv" and sptv_id:
             url = f"https://px.a8.net/svt/ejp?a8mat={sptv_id}"
             cards.append(_aff_card_icon(
