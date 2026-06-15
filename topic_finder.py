@@ -499,6 +499,31 @@ def find_topics_europe(config_path: str = "config.yaml") -> list[Topic]:
     return deduped[:limit]
 
 
+def _fetch_mu_squad_players(fallback: list[str]) -> list[str]:
+    """Transfermarktから現在のMUスクワッドを動的取得"""
+    try:
+        import requests as _req
+        r = _req.get(
+            "https://r.jina.ai/https://www.transfermarkt.com/manchester-united-fc/kader/verein/985",
+            headers={"Accept": "text/plain"},
+            verify=_SSL_VERIFY,
+            timeout=15,
+        )
+        text = r.content.decode("utf-8", errors="replace")
+        # [選手名](https://www.transfermarkt.com/.../profil/spieler/...) 形式で抽出
+        names = re.findall(
+            r'\[([A-Z][A-Za-zÀ-ÖØ-öø-ÿ\s\.\-]+)\]\(https://www\.transfermarkt\.com/[^/]+/profil/spieler/',
+            text,
+        )
+        players = [n.strip() for n in names if len(n.strip().split()) >= 2]
+        if players:
+            print(f"[topic_finder] MUスクワッド取得: {len(players)} 人")
+            return players
+    except Exception as e:
+        print(f"[topic_finder] MUスクワッド取得失敗、フォールバック使用: {e}")
+    return fallback
+
+
 def find_topics_worldcup(config_path: str = "config.yaml") -> list[Topic]:
     """ワールドカップ出場中のマンチェスター・ユナイテッド選手の活躍トピックを取得"""
     from tavily import TavilyClient
@@ -506,11 +531,12 @@ def find_topics_worldcup(config_path: str = "config.yaml") -> list[Topic]:
     config = load_config(config_path)
     cfg = config.get("topic_worldcup", {})
     limit = cfg.get("limit", 10)
-    players = cfg.get("players", [
-        "Bruno Fernandes", "Rasmus Hojlund", "Kobbie Mainoo",
-        "Lisandro Martinez", "Alejandro Garnacho", "Diogo Dalot",
-        "Andre Onana", "Mason Mount", "Luke Shaw",
+    fallback_players = cfg.get("players", [
+        "Bruno Fernandes", "Kobbie Mainoo", "Lisandro Martinez",
+        "Diogo Dalot", "Mason Mount", "Luke Shaw",
     ])
+
+    players = _fetch_mu_squad_players(fallback_players)
 
     whitelist = config["sources"]["whitelist"]
     include_domains = []
@@ -523,7 +549,8 @@ def find_topics_worldcup(config_path: str = "config.yaml") -> list[Topic]:
     if not _SSL_VERIFY:
         client.session.verify = False  # type: ignore[attr-defined]
 
-    queries = [f"{p} World Cup 2026" for p in players[:5]]
+    # 上位10人までWC検索（全員だとAPIコストが高い）
+    queries = [f"{p} World Cup 2026" for p in players[:10]]
     queries.append("Manchester United players World Cup 2026")
 
     seen: set[str] = set()
