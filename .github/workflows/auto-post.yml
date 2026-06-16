@@ -43,17 +43,6 @@ jobs:
       - name: 依存パッケージインストール
         run: pip install -r requirements.txt
 
-      - name: WordPress 認証テスト
-        run: |
-          echo "=== 認証なし（公開エンドポイント） ==="
-          curl -s -o /dev/null -w "HTTP %{http_code}\n" "$WP_URL/wp-json/wp/v2/posts"
-          echo "=== Basic認証あり ==="
-          curl -s -o /dev/null -w "HTTP %{http_code}\n" \
-            -u "$WP_USERNAME:$WP_APP_PASSWORD" \
-            "$WP_URL/wp-json/wp/v2/users/me"
-          echo "=== レスポンス本文（認証なし） ==="
-          curl -sk "$WP_URL/wp-json/" | head -c 200
-
       - name: main.py 実行
         run: python main.py
 
