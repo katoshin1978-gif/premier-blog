@@ -43,6 +43,18 @@ jobs:
       - name: 依存パッケージインストール
         run: pip install -r requirements.txt
 
+      - name: WordPress 認証テスト
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -u "$WP_USERNAME:$WP_APP_PASSWORD" \
+            "$WP_URL/wp-json/wp/v2/users/me")
+          echo "WP REST API 認証結果: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "認証成功"
+          else
+            echo "認証失敗 (HTTP $STATUS)"
+          fi
+
       - name: main.py 実行
         run: python main.py
 
