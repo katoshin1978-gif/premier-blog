@@ -45,15 +45,14 @@ jobs:
 
       - name: WordPress 認証テスト
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          echo "=== 認証なし（公開エンドポイント） ==="
+          curl -s -o /dev/null -w "HTTP %{http_code}\n" "$WP_URL/wp-json/wp/v2/posts"
+          echo "=== Basic認証あり ==="
+          curl -s -o /dev/null -w "HTTP %{http_code}\n" \
             -u "$WP_USERNAME:$WP_APP_PASSWORD" \
-            "$WP_URL/wp-json/wp/v2/users/me")
-          echo "WP REST API 認証結果: $STATUS"
-          if [ "$STATUS" = "200" ]; then
-            echo "認証成功"
-          else
-            echo "認証失敗 (HTTP $STATUS)"
-          fi
+            "$WP_URL/wp-json/wp/v2/users/me"
+          echo "=== レスポンス本文（認証なし） ==="
+          curl -sk "$WP_URL/wp-json/" | head -c 200
 
       - name: main.py 実行
         run: python main.py
