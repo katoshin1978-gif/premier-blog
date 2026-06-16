@@ -21,13 +21,19 @@ _SSL_VERIFY = os.environ.get("SSL_VERIFY", "true").lower() != "false"
 if not _SSL_VERIFY:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# 企業プロキシ環境でのDNSブロック回避。GitHub Actions等では不要なため RESOLVE_TO_IP=false で無効化
+_RESOLVE_TO_IP = os.environ.get("RESOLVE_TO_IP", "true").lower() != "false"
+
 
 def _resolve_to_ip(url: str) -> tuple[str, dict]:
     """
     ホスト名をIPに解決してDNSブロック（Cisco Umbrella等）を回避。
     Returns (ip_based_url, {"Host": hostname})
     失敗時は元のURLをそのまま返す。
+    RESOLVE_TO_IP=false で無効化（GitHub Actions等プロキシなし環境向け）。
     """
+    if not _RESOLVE_TO_IP:
+        return url, {}
     parsed = urlparse(url)
     try:
         ip = socket.gethostbyname(parsed.hostname)
