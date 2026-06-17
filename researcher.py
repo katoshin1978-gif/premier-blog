@@ -104,7 +104,7 @@ def _run_search(
     try:
         resp = client.search(
             query=query,
-            search_depth="advanced",
+            search_depth="basic",
             max_results=max_results,
             include_domains=include_domains,
             days=7,    # 直近1週間の記事のみ

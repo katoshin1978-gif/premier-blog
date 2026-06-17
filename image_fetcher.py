@@ -9,6 +9,7 @@ import random
 import re
 import sqlite3
 import requests
+import yaml
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -362,12 +363,29 @@ def _search_pexels(
         return None
 
 
-def fetch_image(topic: str) -> tuple[bytes, str, str] | None:
+def _is_illustration_enabled(config_path: str = "config.yaml") -> bool:
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        return bool(cfg.get("illustration", {}).get("enabled", False))
+    except Exception:
+        return False
+
+
+def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, str, str] | None:
     """
     アイキャッチ用の横長画像を取得する。
-    Wikimedia Commons → Pexels の順でフォールバック。
+    illustration.enabled=true の場合は Flux でイラスト生成。
+    それ以外は Wikimedia Commons → Pexels の順でフォールバック。
     Returns (image_bytes, filename, attribution) or None.
     """
+    if _is_illustration_enabled(config_path):
+        from image_converter import generate_featured_image
+        result = generate_featured_image(topic)
+        if result:
+            return result
+        print("[image_fetcher] イラスト生成失敗 → 写真にフォールバック")
+
     session = requests.Session()
     session.verify = _SSL_VERIFY
 
@@ -473,15 +491,18 @@ def _search_wikimedia_player(
 def fetch_player_images(
     topic: str,
     max_images: int = 2,
+    config_path: str = "config.yaml",
 ) -> list[tuple[bytes, str, str, str]]:
     """
     記事本文に挿入する選手写真を取得する。
-    トピックから選手名とチーム名を抽出し、チーム名を含めたクエリで検索する。
+    illustration.enabled=true の場合は取得後にイラスト変換を行う。
 
     Returns list of (image_bytes, filename, attribution, player_name).
     """
     session = requests.Session()
     session.verify = _SSL_VERIFY
+
+    illust = _is_illustration_enabled(config_path)
 
     # チーム名を抽出（選手写真クエリの精度向上のため）
     tl = topic.lower()
@@ -503,6 +524,12 @@ def fetch_player_images(
         img = _search_wikimedia_player(session, name, team=team)
         if img:
             content, filename, attribution = img
+            if illust:
+                from image_converter import convert_to_illustration
+                converted = convert_to_illustration(content, filename, player_name=name)
+                if converted:
+                    content, filename = converted
+                    attribution = "Generated with Flux (Replicate)"
             results.append((content, filename, attribution, name))
 
     return results

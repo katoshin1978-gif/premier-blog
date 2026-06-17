@@ -107,6 +107,9 @@ topic_worldcup:
   limit: 10
   count: 2                   # 1回の実行で生成するWC記事数（0で無効化）
 
+illustration:
+  enabled: true
+
 article:
   language: ja
   min_sources: 3
