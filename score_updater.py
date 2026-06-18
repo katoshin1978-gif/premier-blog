@@ -534,5 +534,175 @@ def update_ticker(config_path: str = "config.yaml") -> bool:
     return success
 
 
+
+# 英語チーム名 → 日本語表記マッピング
+_TEAM_NAME_JA: dict[str, str] = {
+    "Manchester United FC": "マンチェスター・ユナイテッド",
+    "Manchester City FC": "マンチェスター・シティ",
+    "Arsenal FC": "アーセナル",
+    "Liverpool FC": "リバプール",
+    "Chelsea FC": "チェルシー",
+    "Tottenham Hotspur FC": "トッテナム",
+    "Newcastle United FC": "ニューカッスル",
+    "Aston Villa FC": "アストン・ヴィラ",
+    "West Ham United FC": "ウェストハム",
+    "Brighton & Hove Albion FC": "ブライトン",
+    "Everton FC": "エバートン",
+    "Fulham FC": "フルハム",
+    "Brentford FC": "ブレントフォード",
+    "Wolverhampton Wanderers FC": "ウォルバーハンプトン",
+    "AFC Bournemouth": "ボーンマス",
+    "Crystal Palace FC": "クリスタル・パレス",
+    "Nottingham Forest FC": "ノッティンガム・フォレスト",
+    "Leicester City FC": "レスター",
+    "Ipswich Town FC": "イプスウィッチ",
+    "Sunderland AFC": "サンダーランド",
+    "Southampton FC": "サウサンプトン",
+    "Luton Town FC": "ルートン",
+    "Sheffield United FC": "シェフィールド・ユナイテッド",
+    "Burnley FC": "バーンリー",
+}
+
+
+def update_club_facts(config_path: str = "config.yaml") -> bool:
+    """
+    football-data.org からPLの全チームコーチ情報を取得し、
+    config.yaml の club_facts セクションを自動更新する。
+    """
+    try:
+        resp = requests.get(
+            f"{FOOTBALL_DATA_BASE}/competitions/PL/teams",
+            headers=_fd_headers(),
+            verify=_SSL_VERIFY,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        teams = resp.json().get("teams", [])
+    except Exception as e:
+        print(f"[score_updater] club_facts 取得失敗: {e}")
+        return False
+
+    new_facts = []
+    for team in teams:
+        coach = team.get("coach", {})
+        coach_name = coach.get("name", "")
+        if not coach_name:
+            continue
+        club_en = team.get("name", "")
+        club_ja = _TEAM_NAME_JA.get(club_en, club_en)
+        new_facts.append({"club": club_ja, "manager": coach_name})
+
+    if not new_facts:
+        print("[score_updater] club_facts: コーチ情報が取得できませんでした")
+        return False
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["club_facts"] = new_facts
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        print(f"[score_updater] club_facts 更新完了: {len(new_facts)} クラブ")
+        return True
+    except Exception as e:
+        print(f"[score_updater] club_facts 書き込み失敗: {e}")
+        return False
+
+
+def update_club_facts_from_web(config_path: str = "config.yaml") -> bool:
+    """
+    Tavily 検索 + Claude 解析で PL 全クラブの現在監督情報を取得し、
+    config.yaml の club_facts を自動更新する。
+    python score_updater.py --update-managers で手動実行。
+    """
+    import json
+    import re as _re
+    import anthropic
+    import httpx
+    from tavily import TavilyClient
+
+    # Tavily で複数クエリを検索してスニペットを収集
+    search_queries = [
+        "Premier League managers head coaches 2025-26 season",
+        "Premier League all clubs current manager 2026",
+    ]
+    all_snippets: list[str] = []
+    try:
+        tc = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+        if not _SSL_VERIFY:
+            tc.session.verify = False  # type: ignore[attr-defined]
+        for q in search_queries:
+            results = tc.search(query=q, search_depth="basic", max_results=5, days=60)
+            for r in results.get("results", []):
+                snippet = r.get("content", "").strip()
+                if snippet:
+                    all_snippets.append(f"[{r.get('url','')}]\n{snippet}")
+    except Exception as e:
+        print(f"[score_updater] 監督情報検索失敗: {e}")
+        return False
+
+    if not all_snippets:
+        print("[score_updater] 監督情報: 検索結果なし")
+        return False
+
+    combined = "\n\n---\n\n".join(all_snippets[:8])
+
+    # Claude Haiku で監督名を抽出
+    try:
+        http_client = httpx.Client(verify=False) if not _SSL_VERIFY else None
+        ai = anthropic.Anthropic(
+            api_key=os.environ["ANTHROPIC_API_KEY"],
+            http_client=http_client,
+        )
+        response = ai.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1200,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "以下の情報から、プレミアリーグの各クラブと現在の監督名を抽出してください。\n"
+                    "JSON形式のみで返してください（説明文・コードブロック不要）：\n"
+                    '[{"club_ja": "マンチェスター・ユナイテッド", "manager": "Michael Carrick"}]\n\n'
+                    "club_ja は下記の日本語表記を使用すること：\n"
+                    + "\n".join(f"  {en} → {ja}" for en, ja in _TEAM_NAME_JA.items())
+                    + f"\n\n情報:\n{combined}"
+                ),
+            }],
+        )
+        raw = response.content[0].text.strip()
+        raw = _re.sub(r"```(?:json)?\n?(.*?)\n?```", r"\1", raw, flags=_re.DOTALL).strip()
+        clubs = json.loads(raw)
+    except Exception as e:
+        print(f"[score_updater] Claude解析失敗: {e}")
+        return False
+
+    new_facts = [
+        {"club": c["club_ja"], "manager": c["manager"]}
+        for c in clubs
+        if c.get("club_ja") and c.get("manager")
+    ]
+    if not new_facts:
+        print("[score_updater] 監督情報: 抽出結果なし")
+        return False
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["club_facts"] = new_facts
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        print(f"[score_updater] club_facts 自動更新完了: {len(new_facts)} クラブ")
+        for fact in new_facts:
+            print(f"  {fact['club']}: {fact['manager']}")
+        return True
+    except Exception as e:
+        print(f"[score_updater] club_facts 書き込み失敗: {e}")
+        return False
+
+
 if __name__ == "__main__":
-    update_ticker()
+    import sys
+    if "--update-managers" in sys.argv:
+        update_club_facts_from_web()
+    else:
+        update_ticker()

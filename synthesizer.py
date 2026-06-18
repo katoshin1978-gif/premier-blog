@@ -268,12 +268,29 @@ def generate_article(
     from datetime import date as _date
     today_str = _date.today().strftime("%Y年%m月%d日")
 
+    # config.yaml の club_facts をプロンプト用テキストに変換
+    club_facts = config.get("club_facts", [])
+    club_facts_text = ""
+    if club_facts:
+        lines = []
+        for cf in club_facts:
+            line = f"- {cf['club']}: 監督={cf['manager']}"
+            if cf.get("note"):
+                line += f"（{cf['note']}）"
+            lines.append(line)
+        club_facts_text = (
+            f"【クラブ基本情報（必ず正確に使用すること・ソース情報より優先）】\n"
+            + "\n".join(lines)
+            + "\n\n"
+        )
+
     user_message = (
         f"以下のトピックについて、提供されたソースを使って日本語記事を生成してください。\n\n"
         f"【重要】今日の日付: {today_str}\n"
         f"ソース記事に含まれる日付を確認し、主要な情報が30日以上前のものであれば記事を書かず、"
         f"代わりに「SKIP_OLD_NEWS」とだけ出力してください。\n\n"
         f"トピック: {topic}\n\n"
+        f"{club_facts_text}"
         f"--- ソース情報 ---\n{source_context}\n--- ここまで ---\n\n"
         f"上記のソースを参照しながら、指定されたフォーマットで日本語記事を生成してください。\n\n"
         f"【タイトルのSEO最適化】\n"

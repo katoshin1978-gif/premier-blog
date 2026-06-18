@@ -19,14 +19,10 @@ sources:
   - calciomercato.com
   - transfermarkt.com
   - eurosport.com/football
-  # ドイツ
   - kicker.de/news/fussball
-  # イタリア
   - gazzetta.it/calcio
   - corrieredellosport.it/calcio
-  # フランス
   - lequipe.fr/Football
-  # スペイン
   - mundodeportivo.com/futbol
   - sport.es/es/futbol
 search:
@@ -59,26 +55,21 @@ topic:
   - Premier League latest news
   - Premier League manager news
 topic_transfers:
-  # Twitter（Nitter）経由で移籍トレンドを取得するアカウント
   nitter_accounts:
   - FabrizioRomano
   - David_Ornstein
   - DiMarzio
-  # 補完用 RSS（Nitter 失敗時）
   rss_feeds:
   - https://www.football-italia.net/feed
   - https://www.90min.com/feed
   - https://www.theguardian.com/football/transfers/rss
-  exclude_man_united: true   # Man United 関連は main パイプラインに任せる
+  exclude_man_united: true
   limit: 10
-  count: 2                   # 1回の実行で生成する移籍記事数
-
+  count: 2
 topic_europe:
-  # Twitter（Nitter）経由で欧州トレンドを取得するアカウント
   nitter_accounts:
   - FabrizioRomano
   - DiMarzio
-  # 欧州フットボール RSS
   rss_feeds:
   - https://www.football-italia.net/feed
   - https://www.espn.com/espn/rss/soccer/news
@@ -89,10 +80,8 @@ topic_europe:
   - https://www.lequipe.fr/rss/actu_rss_Football.xml
   - https://www.mundodeportivo.com/rss/futbol.xml
   limit: 15
-  count: 2                   # 1回の実行で生成する欧州記事数
-
+  count: 2
 topic_worldcup:
-  # Transfermarktから自動取得に失敗した場合のフォールバック（手動メンテ不要）
   players:
   - Bruno Fernandes
   - Kobbie Mainoo
@@ -105,17 +94,38 @@ topic_worldcup:
   - Patrick Dorgu
   - Bryan Mbeumo
   limit: 10
-  count: 2                   # 1回の実行で生成するWC記事数（0で無効化）
-
+  count: 2
 illustration:
   enabled: true
-
+club_facts:
+- club: アーセナル
+  manager: Mikel Arteta
+- club: ブライトン
+  manager: Fabian Hurzeler
+- club: チェルシー
+  manager: Xabi Alonso
+- club: エバートン
+  manager: David Moyes
+- club: イプスウィッチ
+  manager: Kieran McKenna
+- club: リバプール
+  manager: Andoni Iraola
+- club: マンチェスター・ユナイテッド
+  manager: Michael Carrick
+- club: ニューカッスル
+  manager: Eddie Howe
+- club: ノッティンガム・フォレスト
+  manager: Vitor Pereira
+- club: サンダーランド
+  manager: Regis Le Bris
+- club: トッテナム
+  manager: Roberto De Zerbi
 article:
   language: ja
   min_sources: 3
   max_sources: 8
 wordpress:
-  url: https://katoshin.fc2.page
+  url: https://premier-blog.com
   status: draft
   category_id: 4
   category_ids:
