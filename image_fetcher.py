@@ -379,13 +379,6 @@ def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, st
     それ以外は Wikimedia Commons → Pexels の順でフォールバック。
     Returns (image_bytes, filename, attribution) or None.
     """
-    if _is_illustration_enabled(config_path):
-        from image_converter import generate_featured_image
-        result = generate_featured_image(topic)
-        if result:
-            return result
-        print("[image_fetcher] イラスト生成失敗 → 写真にフォールバック")
-
     session = requests.Session()
     session.verify = _SSL_VERIFY
 
@@ -401,6 +394,29 @@ def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, st
     if team_query:
         queries.append(team_query)
     queries.append("Premier League football match action")
+
+    if _is_illustration_enabled(config_path):
+        # Wikimediaで実写取得 → Flux-dev img2imgでリアルアートに変換
+        from image_converter import convert_to_realistic_featured
+        for query in queries:
+            photo_result = _search_wikimedia_landscape(session, query)
+            if photo_result:
+                photo_bytes, photo_filename, _ = photo_result
+                converted = convert_to_realistic_featured(photo_bytes, photo_filename, topic)
+                if converted:
+                    art_bytes, art_filename = converted
+                    return art_bytes, art_filename, "Generated with Flux (Replicate)"
+                break  # 写真取得済みだがimg2img失敗 → Flux-schnellにフォールバック
+        # img2img失敗時はロゴ画像を生成
+        from image_converter import generate_logo_image, generate_featured_image
+        logo = generate_logo_image(topic)
+        if logo:
+            return logo
+        # ロゴも失敗した場合はFlux-schnellにフォールバック
+        result = generate_featured_image(topic)
+        if result:
+            return result
+        print("[image_fetcher] イラスト生成失敗 → 写真にフォールバック")
 
     for query in queries:
         result = _search_wikimedia_landscape(session, query)

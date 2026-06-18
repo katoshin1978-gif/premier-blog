@@ -277,7 +277,7 @@ def _post_article(
 
     # アイキャッチ画像取得・アップロード
     featured_media_id = None
-    img_result = fetch_image(topic.title)
+    img_result = fetch_image(generated.title)
     if img_result:
         img_bytes, img_filename, img_attribution = img_result
         upload_result = upload_media(img_bytes, img_filename, img_attribution, CONFIG_PATH)

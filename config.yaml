@@ -31,7 +31,7 @@ sources:
   - sport.es/es/futbol
 search:
   max_results: 10
-  max_context_words: 500
+  max_context_words: 800
   max_quote_words: 100
 topic:
   mode: rss
