@@ -186,12 +186,33 @@ def generate_logo_image(title: str) -> tuple[bytes, str, str] | None:
     return buf.getvalue(), filename, "Premier Blog Original"
 
 
+def pad_to_landscape(image_bytes: bytes, target_ratio: float = 16 / 9) -> bytes:
+    """
+    縦長・正方形画像を、元画像をぼかした背景で左右を埋めて横長に変換する。
+    既に target_ratio 以上の横長なら何もしない。
+    """
+    from PIL import Image, ImageFilter
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    w, h = img.size
+    if w / h >= target_ratio:
+        return image_bytes
+    target_w = int(h * target_ratio)
+    bg = img.resize((target_w, h), Image.LANCZOS)
+    bg = bg.filter(ImageFilter.GaussianBlur(radius=30))
+    x_offset = (target_w - w) // 2
+    bg.paste(img, (x_offset, 0))
+    out = io.BytesIO()
+    bg.save(out, format="JPEG", quality=85)
+    print(f"[image_converter] pad_to_landscape: {w}x{h} → {target_w}x{h}")
+    return out.getvalue()
+
+
 def convert_to_realistic_featured(
     image_bytes: bytes, filename: str, title: str = ""
 ) -> tuple[bytes, str] | None:
     """
     横長写真をFlux-devでフォトリアルなサッカーアートに変換（アイキャッチ用）。
-    prompt_strength=0.35で元写真の顔・体型を強く保持する。
+    prompt_strength=0.65でリアルアート調への変換強度を高める。
     """
     try:
         import replicate  # noqa: F401
@@ -214,7 +235,7 @@ def convert_to_realistic_featured(
             input={
                 "prompt": prompt,
                 "image": io.BytesIO(image_bytes),
-                "prompt_strength": 0.35,
+                "prompt_strength": 0.9,
                 "output_format": "jpg",
                 "num_outputs": 1,
                 "guidance": 3.5,
@@ -255,7 +276,7 @@ def convert_to_illustration(
             input={
                 "prompt": prompt,
                 "image": io.BytesIO(image_bytes),
-                "prompt_strength": 0.4,
+                "prompt_strength": 0.65,
                 "output_format": "jpg",
                 "num_outputs": 1,
                 "guidance": 3.5,

@@ -22,6 +22,19 @@ PEXELS_API = "https://api.pexels.com/v1/search"
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB 超はWPアップロードでタイムアウトしやすい
 DB_PATH = "processed.db"
 
+# 選手写真でサッカーと無関係な場面（訪問・授賞式・私服等）をブロックするキーワード
+_BLOCKED_PLAYER_TITLE_KEYWORDS = {
+    "visit", "visits", "visited", "visiting",
+    "award", "awards", "ceremony",
+    "charity", "foundation", "hospital",
+    "event", "premiere", "photoshoot",
+    "studio", "interview", "press conference",
+    "fashion", "casual", "street",
+    "shoreditch", "london studio",
+    "school", "children",
+    "dough", "cooking", "baking", "food",
+}
+
 # 汎用すぎてどの記事にも使われてしまうファイルタイトルのキーワード
 _BLOCKED_TITLE_KEYWORDS = {
     "fence", "through fence", "watching through", "spectators fence",
@@ -30,6 +43,10 @@ _BLOCKED_TITLE_KEYWORDS = {
     "through the fence", "outside stadium", "outside ground",
     "sierra leone", "covid-19 ban", "football devotees", "northern sierra",
     "watch premier league games", "climbed stirs",
+    # ロゴ・紋章・ユニフォーム系（選手クエリでもチームロゴがヒットするのを防ぐ）
+    "logo", "crest", "badge", "emblem", "seal", "coat of arms",
+    "pennant", "flag", "kit", "jersey", "shirt", "strip",
+    "icon", "symbol", "wordmark", "monogram",
 }
 
 # キーワード → 表示用チーム名（選手写真クエリに使用）
@@ -274,7 +291,7 @@ def _get_attribution(meta: dict) -> str:
 def _search_wikimedia_landscape(
     session: requests.Session, query: str
 ) -> tuple[bytes, str, str] | None:
-    """横長（幅800px以上、幅/高さ≥1.2）の試合写真を取得する"""
+    """アイキャッチ用写真を取得する（縦長もOK、pad_to_landscapeで横長化する）"""
     try:
         data = _wikimedia_get(session, {
             "action": "query", "generator": "search",
@@ -294,7 +311,7 @@ def _search_wikimedia_landscape(
         if info.get("mime") not in ("image/jpeg", "image/png"):
             continue
         w, h = info.get("width", 0), info.get("height", 0)
-        if w < 800 or h < 100 or (h and w / h < 1.2):
+        if min(w, h) < 400:
             continue
         candidates.append((w, info, page))
 
@@ -363,6 +380,62 @@ def _search_pexels(
         return None
 
 
+def _search_tavily_images(
+    session: requests.Session, api_key: str, query: str, landscape: bool = True
+) -> tuple[bytes, str, str] | None:
+    """
+    Tavily 画像検索で写真を取得する。
+    landscape=True: 横長（アイキャッチ用）、False: 縦長or正方形（選手写真用）
+    """
+    import io
+    from PIL import Image as PilImage
+    try:
+        resp = session.post(
+            "https://api.tavily.com/search",
+            json={"api_key": api_key, "query": query, "include_images": True, "max_results": 5},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        image_urls = resp.json().get("images", [])
+    except Exception as e:
+        print(f"[image_fetcher] Tavily 画像検索失敗 '{query}': {e}")
+        return None
+
+    if not image_urls:
+        return None
+
+    random.shuffle(image_urls)
+    _get_db()
+    for url in image_urls:
+        if not url.lower().endswith((".jpg", ".jpeg", ".png")):
+            continue
+        content = _download(session, url)
+        if not content or len(content) > MAX_IMAGE_BYTES:
+            continue
+        try:
+            img = PilImage.open(io.BytesIO(content))
+            w, h = img.size
+        except Exception:
+            continue
+        if landscape:
+            if min(w, h) < 400:
+                continue
+        else:
+            short = min(w, h)
+            if short < 400 or (h > 0 and w / h > 2.5):
+                continue
+        filename = re.sub(r"[^\w.-]", "_", url.split("/")[-1].split("?")[0]) or "tavily_image.jpg"
+        if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
+            filename += ".jpg"
+        if _is_image_used(filename):
+            continue
+        _mark_image_used(filename)
+        label = "アイキャッチ" if landscape else "選手写真"
+        print(f"[image_fetcher] Tavily {label}: {filename} ({len(content)//1024}KB) query='{query}'")
+        return content, filename, "Tavily Search"
+    return None
+
+
 def _is_illustration_enabled(config_path: str = "config.yaml") -> bool:
     try:
         with open(config_path, encoding="utf-8") as f:
@@ -390,54 +463,67 @@ def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, st
 
     queries = []
     if player:
-        queries.append(f"{player} football")
+        # "footballer" を付けると人物写真に絞られロゴ画像を避けられる
+        queries.append(f"{player} footballer")
+        queries.append(f"{player} football match")
     if team_query:
         queries.append(team_query)
     queries.append("Premier League football match action")
 
-    if _is_illustration_enabled(config_path):
-        # Wikimediaで実写取得 → Flux-dev img2imgでリアルアートに変換
-        from image_converter import convert_to_realistic_featured
+    tavily_key = os.environ.get("TAVILY_API_KEY", "")
+
+    def _pad_and_return(res: tuple[bytes, str, str]) -> tuple[bytes, str, str]:
+        from image_converter import pad_to_landscape
+        content, filename, attribution = res
+        content = pad_to_landscape(content)
+        return content, filename, attribution
+
+    # 写真取得（Tavily → Wikimedia → Pexels → 汎用Wikimedia）
+    photo_result = None
+    if tavily_key:
+        for query in queries:
+            photo_result = _search_tavily_images(session, tavily_key, query, landscape=True)
+            if photo_result:
+                break
+    if not photo_result:
         for query in queries:
             photo_result = _search_wikimedia_landscape(session, query)
             if photo_result:
-                photo_bytes, photo_filename, _ = photo_result
-                converted = convert_to_realistic_featured(photo_bytes, photo_filename, topic)
-                if converted:
-                    art_bytes, art_filename = converted
-                    return art_bytes, art_filename, "Generated with Flux (Replicate)"
-                break  # 写真取得済みだがimg2img失敗 → Flux-schnellにフォールバック
-        # img2img失敗時はロゴ画像を生成
-        from image_converter import generate_logo_image, generate_featured_image
+                break
+    if not photo_result:
+        pexels_key = os.environ.get("PEXELS_API_KEY", "")
+        if pexels_key:
+            pexels_queries = queries + ["soccer football stadium", "football match crowd"]
+            for pq in pexels_queries:
+                photo_result = _search_pexels(session, pexels_key, pq)
+                if photo_result:
+                    break
+    if not photo_result:
+        for fallback_q in ["Association football", "football stadium", "soccer match"]:
+            photo_result = _search_wikimedia_landscape(session, fallback_q)
+            if photo_result:
+                print(f"[image_fetcher] 最終フォールバック画像使用: {fallback_q}")
+                break
+
+    if photo_result:
+        # illustration modeならFlux変換を試みる（失敗したらpad済み写真をそのまま使う）
+        if _is_illustration_enabled(config_path):
+            from image_converter import convert_to_realistic_featured
+            padded_bytes, _, _ = _pad_and_return(photo_result)
+            converted = convert_to_realistic_featured(padded_bytes, photo_result[1], topic)
+            if converted:
+                art_bytes, art_filename = converted
+                return art_bytes, art_filename, "Generated with Flux (Replicate)"
+            print("[image_fetcher] Flux変換失敗 → pad写真をそのまま使用")
+        return _pad_and_return(photo_result)
+
+    # 写真が全滅した場合のみロゴ生成
+    if _is_illustration_enabled(config_path):
+        from image_converter import generate_logo_image
         logo = generate_logo_image(topic)
         if logo:
+            print("[image_fetcher] 写真取得不可 → ロゴ生成")
             return logo
-        # ロゴも失敗した場合はFlux-schnellにフォールバック
-        result = generate_featured_image(topic)
-        if result:
-            return result
-        print("[image_fetcher] イラスト生成失敗 → 写真にフォールバック")
-
-    for query in queries:
-        result = _search_wikimedia_landscape(session, query)
-        if result:
-            return result
-
-    pexels_key = os.environ.get("PEXELS_API_KEY", "")
-    if pexels_key:
-        print("[image_fetcher] Wikimedia で画像なし → Pexels")
-        pexels_queries = queries + ["soccer football stadium", "football match crowd"]
-        for pq in pexels_queries:
-            result = _search_pexels(session, pexels_key, pq)
-            if result:
-                return result
-
-    # 最終フォールバック: 汎用クエリでWikimedia再試行
-    for fallback_q in ["Association football", "football stadium", "soccer match"]:
-        result = _search_wikimedia_landscape(session, fallback_q)
-        if result:
-            print(f"[image_fetcher] 最終フォールバック画像使用: {fallback_q}")
-            return result
 
     return None
 
@@ -452,13 +538,14 @@ def _search_wikimedia_player(
     """選手個人の写真（縦長 or ほぼ正方形、400px以上）を取得する"""
     queries = []
     if team:
-        queries.append(f"{player_name} {team}")   # 例: "Bruno Fernandes Manchester United"
-    queries += [f"{player_name} footballer", f"{player_name} soccer"]
+        queries.append(f"{player_name} {team} football")  # チーム名+footballで試合写真に絞る
+        queries.append(f"{player_name} {team}")
+    queries += [f"{player_name} footballer", f"{player_name} football match"]
     for query in queries:
         try:
             data = _wikimedia_get(session, {
                 "action": "query", "generator": "search",
-                "gsrsearch": query, "gsrnamespace": 6, "gsrlimit": 15,
+                "gsrsearch": query, "gsrnamespace": 6, "gsrlimit": 20,
                 "prop": "imageinfo",
                 "iiprop": "url|size|mime|extmetadata",
                 "iiextmetadatafilter": "Artist|LicenseShortName",
@@ -470,6 +557,11 @@ def _search_wikimedia_player(
 
         candidates = []
         for page in data.get("query", {}).get("pages", {}).values():
+            title = page.get("title", "")
+            tl = title.lower().replace("_", " ")
+            if any(kw in tl for kw in _BLOCKED_PLAYER_TITLE_KEYWORDS):
+                print(f"[image_fetcher] 選手写真スキップ（非サッカー）: {title}")
+                continue
             info = (page.get("imageinfo") or [{}])[0]
             if info.get("mime") not in ("image/jpeg", "image/png"):
                 continue
@@ -537,15 +629,21 @@ def fetch_player_images(
             continue
         tried.add(key)
 
+        # Wikimedia優先（選手名で正確な写真が取れる）、Tavilyはフォールバック
         img = _search_wikimedia_player(session, name, team=team)
+        if not img:
+            tavily_key = os.environ.get("TAVILY_API_KEY", "")
+            if tavily_key:
+                queries = []
+                if team:
+                    queries.append(f"{name} {team} footballer")
+                queries += [f"{name} footballer", f"{name} football match"]
+                for q in queries:
+                    img = _search_tavily_images(session, tavily_key, q, landscape=False)
+                    if img:
+                        break
         if img:
             content, filename, attribution = img
-            if illust:
-                from image_converter import convert_to_illustration
-                converted = convert_to_illustration(content, filename, player_name=name)
-                if converted:
-                    content, filename = converted
-                    attribution = "Generated with Flux (Replicate)"
             results.append((content, filename, attribution, name))
 
     return results

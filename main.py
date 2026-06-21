@@ -9,7 +9,7 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Windows コンソールが cp932 の場合でも EMダッシュなど Unicode 文字を出力できるようにする
@@ -204,7 +204,21 @@ def is_processed(conn: sqlite3.Connection, topic: Topic) -> bool:
     row = conn.execute(
         "SELECT id FROM processed_topics WHERE topic_hash = ?", (h,)
     ).fetchone()
-    return row is not None
+    if row:
+        return True
+    # タイトルの主要単語（5文字以上）が過去14日以内のタイトルと3語以上一致すれば重複とみなす
+    words = {w for w in re.sub(r"[^\w\s]", "", topic.title.lower()).split() if len(w) >= 5}
+    if not words:
+        return False
+    cutoff = (datetime.now() - timedelta(days=14)).isoformat()
+    recent = conn.execute(
+        "SELECT topic_title FROM processed_topics WHERE created_at >= ?", (cutoff,)
+    ).fetchall()
+    for (title,) in recent:
+        past_words = {w for w in re.sub(r"[^\w\s]", "", title.lower()).split() if len(w) >= 5}
+        if len(words & past_words) >= 3:
+            return True
+    return False
 
 
 def mark_processed(conn: sqlite3.Connection, topic: Topic, post_id: int, post_url: str) -> None:
@@ -266,6 +280,7 @@ def _post_article(
 
     if generated.content.strip() == "SKIP_OLD_NEWS":
         print(f"[main] 古いニュースのためスキップ: {topic.title}")
+        mark_processed(conn, topic, 0, "")  # 再選択されないよう記録
         return False
 
     if dry_run:
