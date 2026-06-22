@@ -219,11 +219,31 @@ def _extract_all_player_names(text: str) -> list[str]:
     """
     text = re.sub(r"^\[.*?\]\s*", "", text)
     text = re.sub(r"['''""][^'''""]*['''""]", "", text)
-    words = re.findall(r"\b[A-Z][a-z]{2,}\b", text)
-    candidates = [w for w in words if w.lower() not in _EXCLUDE_WORDS]
 
     pairs: list[str] = []
     seen: set[str] = set()
+
+    # O'Neil / D'Ambrosio 等アポストロフィ付き姓名を優先抽出
+    # finditer でマッチしながら書き換えると位置がずれるため、先に全マッチを収集してから逆順で置換
+    apostrophe_matches = list(re.finditer(
+        r"\b([A-Z][a-z]{2,})\s+([A-Z][a-z]?['''][A-Z][a-z]{2,})\b", text
+    ))
+    for m in apostrophe_matches:
+        first, last = m.group(1), m.group(2)
+        if first.lower() in _EXCLUDE_WORDS:
+            continue
+        full = f"{first} {last}"
+        key = full.lower()
+        if key not in seen:
+            seen.add(key)
+            pairs.append(full)
+    # 抽出済みの部分を空白で潰して通常抽出で再ヒットしないようにする（逆順で位置ずれ回避）
+    for m in reversed(apostrophe_matches):
+        text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+
+    words = re.findall(r"\b[A-Z][a-z]{2,}\b", text)
+    candidates = [w for w in words if w.lower() not in _EXCLUDE_WORDS]
+
     i = 0
     while i < len(candidates):
         if i + 1 < len(candidates):
