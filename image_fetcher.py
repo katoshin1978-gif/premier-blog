@@ -123,6 +123,11 @@ _EXCLUDE_WORDS = {
     "mood", "turns", "slot", "doku", "shines", "ready", "demands",
     "swift", "clarity", "attract", "signings", "urged", "sell", "weak",
     "goalless", "play", "out", "hits", "misses", "european",
+    # W杯・大会関連（"Every World Cup Opener Rated" のような見出しで誤抽出される）
+    "world", "every", "opener", "rated", "group", "stage", "round", "knock",
+    "fixture", "schedule", "format", "venue", "ticket", "tickets", "host",
+    "squad", "player", "players", "team", "teams", "nation", "nations",
+    "qualify", "qualifier", "qualifiers", "tournament", "competition",
     # 新聞・メディア特有のセクション見出し語（偽の人名として抽出されるのを防ぐ）
     "papers", "exclusive", "breaking", "official", "sources", "report",
     "reports", "transfer", "rumours", "rumors", "daily", "sunday",
