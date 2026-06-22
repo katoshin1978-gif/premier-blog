@@ -572,8 +572,11 @@ def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, st
 
     # 写真取得（TheSportsDB → Tavily → Wikimedia → Pexels → 汎用Wikimedia）
     photo_result = None
-    # TheSportsDB: チーム名があればファンアートを最初に試す
-    if team_query:
+    # TheSportsDB: 選手名があれば選手サムネイルを最初に試す（無料APIで取得可能）
+    if player:
+        photo_result = _search_thesportsdb_player(session, player)
+    # TheSportsDB: チーム名があればファンアートも試す（有料APIで追加取得可能）
+    if not photo_result and team_query:
         team_display = next((v for k, v in _TEAM_DISPLAY_NAMES.items() if k in tl), None)
         if team_display:
             photo_result = _search_thesportsdb_team(session, team_display)
