@@ -19,6 +19,7 @@ _WK_UA = "premier-blog/1.0 (https://premier-blog.com; katoshin1978@gmail.com)"
 
 WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
 PEXELS_API = "https://api.pexels.com/v1/search"
+THESPORTSDB_API = "https://www.thesportsdb.com/api/v1/json"
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB 超はWPアップロードでタイムアウトしやすい
 DB_PATH = "processed.db"
 
@@ -285,6 +286,92 @@ def _get_attribution(meta: dict) -> str:
 
 
 # -----------------------------------------------------------------------
+# TheSportsDB
+# -----------------------------------------------------------------------
+
+def _thesportsdb_key() -> str:
+    return os.environ.get("THESPORTSDB_API_KEY", "3")
+
+
+def _search_thesportsdb_player(
+    session: requests.Session, player_name: str
+) -> tuple[bytes, str, str] | None:
+    """TheSportsDB で選手写真（strThumb）を取得する"""
+    try:
+        resp = session.get(
+            f"{THESPORTSDB_API}/{_thesportsdb_key()}/searchplayers.php",
+            params={"p": player_name},
+            timeout=15,
+            verify=_SSL_VERIFY,
+        )
+        resp.raise_for_status()
+        players = resp.json().get("player") or []
+    except Exception as e:
+        print(f"[image_fetcher] TheSportsDB player 検索失敗 '{player_name}': {e}")
+        return None
+
+    _get_db()
+    for player in players[:5]:
+        for field in ("strThumb", "strCutout", "strRender"):
+            url = player.get(field)
+            if not url or not url.startswith("http"):
+                continue
+            ext = url.split(".")[-1].split("?")[0].lower()
+            if ext not in ("jpg", "jpeg", "png"):
+                continue
+            filename = f"sportsdb_{player.get('idPlayer', 'p')}_{field.lower()}.jpg"
+            if _is_image_used(filename):
+                continue
+            content = _download(session, url)
+            if not content or len(content) > MAX_IMAGE_BYTES:
+                continue
+            _mark_image_used(filename)
+            print(f"[image_fetcher] TheSportsDB 選手写真: {player_name} → {filename} ({len(content)//1024}KB)")
+            return content, filename, f"TheSportsDB / {player.get('strPlayer', player_name)}"
+    return None
+
+
+def _search_thesportsdb_team(
+    session: requests.Session, team_name: str
+) -> tuple[bytes, str, str] | None:
+    """TheSportsDB でチームのファンアート（横長）を取得する"""
+    try:
+        resp = session.get(
+            f"{THESPORTSDB_API}/{_thesportsdb_key()}/searchteams.php",
+            params={"t": team_name},
+            timeout=15,
+            verify=_SSL_VERIFY,
+        )
+        resp.raise_for_status()
+        teams = resp.json().get("teams") or []
+    except Exception as e:
+        print(f"[image_fetcher] TheSportsDB team 検索失敗 '{team_name}': {e}")
+        return None
+
+    if not teams:
+        return None
+
+    team = teams[0]
+    _get_db()
+    fanart_fields = ["strTeamFanart1", "strTeamFanart2", "strTeamFanart3", "strTeamFanart4", "strTeamFanart5", "strTeamBanner"]
+    urls = [team.get(f) for f in fanart_fields if team.get(f)]
+    random.shuffle(urls)
+    for url in urls:
+        if not url or not url.startswith("http"):
+            continue
+        filename = f"sportsdb_team_{re.sub(r'[^\\w]', '_', team_name.lower())}.jpg"
+        if _is_image_used(filename):
+            filename = f"sportsdb_team_{re.sub(r'[^\\w]', '_', team_name.lower())}_{random.randint(1000,9999)}.jpg"
+        content = _download(session, url)
+        if not content or len(content) > MAX_IMAGE_BYTES:
+            continue
+        _mark_image_used(filename)
+        print(f"[image_fetcher] TheSportsDB チーム画像: {team_name} → {filename} ({len(content)//1024}KB)")
+        return content, filename, f"TheSportsDB / {team.get('strTeam', team_name)}"
+    return None
+
+
+# -----------------------------------------------------------------------
 # アイキャッチ画像（横長・試合写真）
 # -----------------------------------------------------------------------
 
@@ -478,9 +565,14 @@ def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, st
         content = pad_to_landscape(content)
         return content, filename, attribution
 
-    # 写真取得（Tavily → Wikimedia → Pexels → 汎用Wikimedia）
+    # 写真取得（TheSportsDB → Tavily → Wikimedia → Pexels → 汎用Wikimedia）
     photo_result = None
-    if tavily_key:
+    # TheSportsDB: チーム名があればファンアートを最初に試す
+    if team_query:
+        team_display = next((v for k, v in _TEAM_DISPLAY_NAMES.items() if k in tl), None)
+        if team_display:
+            photo_result = _search_thesportsdb_team(session, team_display)
+    if not photo_result and tavily_key:
         for query in queries:
             photo_result = _search_tavily_images(session, tavily_key, query, landscape=True)
             if photo_result:
@@ -629,8 +721,10 @@ def fetch_player_images(
             continue
         tried.add(key)
 
-        # Wikimedia優先（選手名で正確な写真が取れる）、Tavilyはフォールバック
-        img = _search_wikimedia_player(session, name, team=team)
+        # TheSportsDB優先 → Wikimedia → Tavily
+        img = _search_thesportsdb_player(session, name)
+        if not img:
+            img = _search_wikimedia_player(session, name, team=team)
         if not img:
             tavily_key = os.environ.get("TAVILY_API_KEY", "")
             if tavily_key:
