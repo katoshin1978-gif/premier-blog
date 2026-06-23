@@ -291,8 +291,13 @@ def _post_article(
         return True
 
     # アイキャッチ画像取得・アップロード
+    # 英語トピック + ソース記事タイトルを結合して選手名抽出精度を向上
     featured_media_id = None
-    img_result = fetch_image(generated.title)
+    img_topic = topic.title
+    if articles:
+        src_titles = " ".join(a.title for a in articles[:3] if a.title)
+        img_topic = f"{img_topic} {src_titles}"
+    img_result = fetch_image(img_topic)
     if img_result:
         img_bytes, img_filename, img_attribution = img_result
         upload_result = upload_media(img_bytes, img_filename, img_attribution, CONFIG_PATH)
