@@ -9,10 +9,12 @@ Man United 関連トピックの場合は Manchester Evening News・Metro を含
 
 import os
 import re
+import unicodedata
 import warnings
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+import anthropic
 import yaml
 from dotenv import load_dotenv
 from tavily import TavilyClient
@@ -86,6 +88,44 @@ def is_whitelisted(url: str, whitelist: list[str]) -> bool:
     return any(domain_path.startswith(w.lstrip("www.")) for w in whitelist)
 
 
+def _is_japanese(text: str) -> bool:
+    """テキストに日本語文字（ひらがな・カタカナ・漢字）が含まれるか判定"""
+    for ch in text:
+        name = unicodedata.name(ch, "")
+        if "HIRAGANA" in name or "KATAKANA" in name or "CJK" in name:
+            return True
+    return False
+
+
+def _translate_to_english_query(topic: str) -> str:
+    """日本語トピックをTavily検索用の英語クエリに変換する（Claude API使用）"""
+    _ssl = os.environ.get("SSL_VERIFY", "true").lower() != "false"
+    try:
+        import httpx
+        http_client = httpx.Client(verify=False) if not _ssl else None
+        client = anthropic.Anthropic(
+            api_key=os.environ["ANTHROPIC_API_KEY"],
+            http_client=http_client,
+        )
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Convert this Japanese football topic to a concise English search query "
+                    f"(player names in English, max 10 words, no punctuation):\n{topic}"
+                ),
+            }],
+        )
+        query = resp.content[0].text.strip()
+        print(f"[researcher] 日本語トピック翻訳: '{topic[:40]}' → '{query}'")
+        return query
+    except Exception as e:
+        print(f"[researcher] 翻訳失敗（原文使用）: {e}")
+        return topic
+
+
 def _build_query(topic: str, context: str = "default") -> str:
     # Nitter ツイートトピックは先頭の "[アカウント名] " を除去してクエリに使う
     topic = re.sub(r"^\[.*?\]\s*", "", topic).strip()
@@ -131,11 +171,13 @@ def search_articles(query: str, config_path: str = "config.yaml", context: str =
     if not _SSL_VERIFY:
         client.session.verify = False  # type: ignore[attr-defined]
 
-    search_query = _build_query(query, context)
+    # 日本語トピックは英語クエリに変換してから検索
+    search_base = _translate_to_english_query(query) if _is_japanese(query) else query
+    search_query = _build_query(search_base, context)
     all_items = _run_search(client, search_query, include_domains, max_results)
 
     # Man United 関連トピックの場合は MEN・Metro を含む専用クエリを追加実行（defaultコンテキストのみ）
-    if context == "default" and _is_man_united_topic(query):
+    if context == "default" and (_is_man_united_topic(query) or _is_man_united_topic(search_base)):
         mu_domains = list(set(include_domains + _MAN_UNITED_EXTRA_DOMAINS))
         mu_query = f"Manchester United {search_query}" if "manchester united" not in search_query.lower() else search_query
         extra_items = _run_search(client, mu_query, mu_domains, max_results)
