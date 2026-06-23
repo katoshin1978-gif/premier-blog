@@ -396,6 +396,47 @@ def _search_thesportsdb_team(
     return None
 
 
+def _search_thesportsdb_league(
+    session: requests.Session, league_id: int = 4328
+) -> tuple[bytes, str, str] | None:
+    """TheSportsDB でリーグのファンアート/バナーを取得する（デフォルト: Premier League ID=4328）"""
+    try:
+        resp = session.get(
+            f"{THESPORTSDB_API}/{_thesportsdb_key()}/lookupleague.php",
+            params={"id": league_id},
+            timeout=15,
+            verify=_SSL_VERIFY,
+        )
+        resp.raise_for_status()
+        leagues = resp.json().get("leagues") or []
+    except Exception as e:
+        print(f"[image_fetcher] TheSportsDB league 検索失敗 (id={league_id}): {e}")
+        return None
+
+    if not leagues:
+        return None
+
+    league = leagues[0]
+    _get_db()
+    fanart_fields = ["strFanart1", "strFanart2", "strFanart3", "strFanart4", "strBanner"]
+    urls = [league.get(f) for f in fanart_fields if league.get(f)]
+    random.shuffle(urls)
+    for url in urls:
+        if not url or not url.startswith("http"):
+            continue
+        slug = re.sub(r"[^\w]", "_", league.get("strLeague", "league").lower())
+        filename = f"sportsdb_league_{slug}_{random.randint(1000, 9999)}.jpg"
+        if _is_image_used(filename):
+            continue
+        content = _download(session, url)
+        if not content or len(content) > MAX_IMAGE_BYTES:
+            continue
+        _mark_image_used(filename)
+        print(f"[image_fetcher] TheSportsDB リーグ画像: {league.get('strLeague', '')} → {filename} ({len(content)//1024}KB)")
+        return content, filename, f"TheSportsDB / {league.get('strLeague', 'Premier League')}"
+    return None
+
+
 # -----------------------------------------------------------------------
 # アイキャッチ画像（横長・試合写真）
 # -----------------------------------------------------------------------
@@ -600,6 +641,9 @@ def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, st
         team_display = next((v for k, v in _TEAM_DISPLAY_NAMES.items() if k in tl), None)
         if team_display:
             photo_result = _search_thesportsdb_team(session, team_display)
+    # TheSportsDB: 選手もチームも特定できない汎用トピック → リーグ画像を優先使用
+    if not photo_result and not player and not team_query:
+        photo_result = _search_thesportsdb_league(session)
     if not photo_result and tavily_key:
         for query in queries:
             photo_result = _search_tavily_images(session, tavily_key, query, landscape=True)
