@@ -384,9 +384,10 @@ def _search_thesportsdb_team(
     for url in urls:
         if not url or not url.startswith("http"):
             continue
-        filename = f"sportsdb_team_{re.sub(r'[^\\w]', '_', team_name.lower())}.jpg"
+        team_slug = re.sub(r"\W", "_", team_name.lower())
+        filename = f"sportsdb_team_{team_slug}.jpg"
         if _is_image_used(filename):
-            filename = f"sportsdb_team_{re.sub(r'[^\\w]', '_', team_name.lower())}_{random.randint(1000,9999)}.jpg"
+            filename = f"sportsdb_team_{team_slug}_{random.randint(1000,9999)}.jpg"
         content = _download(session, url)
         if not content or len(content) > MAX_IMAGE_BYTES:
             continue
