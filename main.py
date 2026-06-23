@@ -295,7 +295,7 @@ def _post_article(
     featured_media_id = None
     img_topic = topic.title
     if articles:
-        src_titles = " ".join(a.title for a in articles[:3] if a.title)
+        src_titles = " ".join(a.title for a in articles if a.title)
         img_topic = f"{img_topic} {src_titles}"
     img_result = fetch_image(img_topic)
     if img_result:

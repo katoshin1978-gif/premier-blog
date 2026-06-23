@@ -248,8 +248,8 @@ def _extract_all_player_names(text: str) -> list[str]:
     while i < len(candidates):
         if i + 1 < len(candidates):
             w1, w2 = candidates[i], candidates[i + 1]
-            # 両語ともに4文字以上の場合のみ姓名ペアとみなす
-            if len(w1) >= 4 and len(w2) >= 4:
+            # 名前ペア判定: 両語とも4文字以上 or 片方が3文字で他方が5文字以上（Yan, Ben等の短い名前に対応）
+            if (len(w1) >= 4 and len(w2) >= 4) or (len(w1) == 3 and len(w2) >= 5):
                 pair = f"{w1} {w2}"
                 key = pair.lower()
                 if key not in seen:
