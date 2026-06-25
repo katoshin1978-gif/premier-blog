@@ -225,7 +225,7 @@ def convert_to_realistic_featured(
     prompt = (
         f"Premier League football, {subject}, "
         "anime style sports illustration, vibrant digital art, "
-        "bold outlines, cel-shaded, dynamic action composition, "
+        "bold outlines, cel-shaded, preserve facial features and likeness, "
         "vivid saturated colors, professional sports manga artwork, wide cinematic"
     )
     new_filename = "art_" + re.sub(r"[^a-zA-Z0-9]", "_", filename[:40]).lower() + ".jpg"
@@ -237,7 +237,7 @@ def convert_to_realistic_featured(
             input={
                 "prompt": prompt,
                 "image": io.BytesIO(image_bytes),
-                "prompt_strength": 0.9,
+                "prompt_strength": 0.5,
                 "output_format": "jpg",
                 "num_outputs": 1,
                 "guidance": 3.5,
@@ -268,7 +268,7 @@ def convert_to_illustration(
         return None
 
     subject = f"football player {player_name}" if player_name else "football player"
-    prompt = f"{subject}, {_ILLUSTRATION_STYLE}, portrait illustration"
+    prompt = f"{subject}, {_ILLUSTRATION_STYLE}, portrait illustration, preserve facial features and likeness"
     new_filename = "illust_" + filename
 
     try:
@@ -278,7 +278,7 @@ def convert_to_illustration(
             input={
                 "prompt": prompt,
                 "image": io.BytesIO(image_bytes),
-                "prompt_strength": 0.75,
+                "prompt_strength": 0.5,
                 "output_format": "jpg",
                 "num_outputs": 1,
                 "guidance": 3.5,

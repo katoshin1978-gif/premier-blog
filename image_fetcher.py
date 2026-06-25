@@ -351,7 +351,7 @@ def _search_thesportsdb_player(
             if not content or len(content) > MAX_IMAGE_BYTES:
                 continue
             _mark_image_used(filename)
-            print(f"[image_fetcher] TheSportsDB 選手写真: {player_name} → {filename} ({len(content)//1024}KB)")
+            print(f"[image_fetcher] TheSportsDB 選手写真: {player_name} → {filename} ({len(content)//1024}KB) 元URL={url}")
             return content, filename, f"TheSportsDB / {player.get('strPlayer', player_name)}"
     return None
 
@@ -494,7 +494,7 @@ def _search_wikimedia_landscape(
             continue
         attribution = _get_attribution(info.get("extmetadata", {}))
         _mark_image_used(filename)
-        print(f"[image_fetcher] アイキャッチ: {filename} ({len(content)//1024}KB) query='{query}'")
+        print(f"[image_fetcher] アイキャッチ: {filename} ({len(content)//1024}KB) query='{query}' 元URL={info['url']}")
         return content, filename, attribution
 
     return None
@@ -585,7 +585,7 @@ def _search_tavily_images(
             continue
         _mark_image_used(filename)
         label = "アイキャッチ" if landscape else "選手写真"
-        print(f"[image_fetcher] Tavily {label}: {filename} ({len(content)//1024}KB) query='{query}'")
+        print(f"[image_fetcher] Tavily {label}: {filename} ({len(content)//1024}KB) query='{query}' 元URL={url}")
         return content, filename, "Tavily Search"
     return None
 
@@ -768,7 +768,7 @@ def _search_wikimedia_player(
                 continue
             attribution = _get_attribution(info.get("extmetadata", {}))
             _mark_image_used(filename)
-            print(f"[image_fetcher] 選手写真: {player_name} → {filename} ({len(content)//1024}KB)")
+            print(f"[image_fetcher] 選手写真: {player_name} → {filename} ({len(content)//1024}KB) 元URL={info['url']}")
             return content, filename, attribution
 
     return None
