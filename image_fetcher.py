@@ -651,6 +651,13 @@ def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, st
             if photo_result:
                 break
     if not photo_result:
+        # 選手名がある場合は縦長個人写真を先に試みる（幅ソートの横長検索より精度が高い）
+        if player:
+            player_photo = _search_wikimedia_player(session, player)
+            if player_photo:
+                photo_result = player_photo
+                print(f"[image_fetcher] Wikimedia選手写真をアイキャッチに使用: {player}")
+    if not photo_result:
         for query in queries:
             photo_result = _search_wikimedia_landscape(session, query)
             if photo_result:
@@ -746,15 +753,21 @@ def _search_wikimedia_player(
         candidates.sort(key=lambda x: x[0], reverse=True)
         top = candidates[:5]
         random.shuffle(top)
+        _get_db()
         for _, info, page in top:
+            title = page.get("title", player_name)
+            filename = _make_filename(title)
+            if _is_image_used(filename):
+                print(f"[image_fetcher] 選手写真スキップ（使用済み）: {filename}")
+                continue
             content = _download(session, info["url"])
             if not content:
                 continue
             if len(content) > MAX_IMAGE_BYTES:
-                print(f"[image_fetcher] スキップ（{len(content)//1024}KB 超過）: {page.get('title', '')}")
+                print(f"[image_fetcher] スキップ（{len(content)//1024}KB 超過）: {title}")
                 continue
-            filename = _make_filename(page.get("title", player_name))
             attribution = _get_attribution(info.get("extmetadata", {}))
+            _mark_image_used(filename)
             print(f"[image_fetcher] 選手写真: {player_name} → {filename} ({len(content)//1024}KB)")
             return content, filename, attribution
 

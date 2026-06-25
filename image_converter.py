@@ -20,8 +20,9 @@ if not _SSL_VERIFY:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _ILLUSTRATION_STYLE = (
-    "hyperrealistic sports art, professional digital painting, "
-    "dramatic stadium lighting, vivid colors, sharp focus, 4K detail"
+    "anime style sports illustration, vibrant digital art, "
+    "bold outlines, cel-shaded, dynamic action pose, "
+    "vivid saturated colors, professional sports manga artwork"
 )
 
 
@@ -223,8 +224,9 @@ def convert_to_realistic_featured(
     subject = title[:80] if title else "football player"
     prompt = (
         f"Premier League football, {subject}, "
-        "hyperrealistic sports photography art, professional digital painting, "
-        "dramatic stadium lighting, sharp focus, vivid colors, 4K ultra detail"
+        "anime style sports illustration, vibrant digital art, "
+        "bold outlines, cel-shaded, dynamic action composition, "
+        "vivid saturated colors, professional sports manga artwork, wide cinematic"
     )
     new_filename = "art_" + re.sub(r"[^a-zA-Z0-9]", "_", filename[:40]).lower() + ".jpg"
 
@@ -276,7 +278,7 @@ def convert_to_illustration(
             input={
                 "prompt": prompt,
                 "image": io.BytesIO(image_bytes),
-                "prompt_strength": 0.65,
+                "prompt_strength": 0.75,
                 "output_format": "jpg",
                 "num_outputs": 1,
                 "guidance": 3.5,
