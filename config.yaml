@@ -96,7 +96,7 @@ topic_worldcup:
   limit: 10
   count: 2
 illustration:
-  enabled: true
+  enabled: false
 club_facts:
 - club: アーセナル
   manager: Mikel Arteta
