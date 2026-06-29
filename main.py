@@ -33,7 +33,7 @@ load_dotenv()
 _SSL_VERIFY = os.environ.get("SSL_VERIFY", "true").lower() != "false"
 DB_PATH = "processed.db"
 CONFIG_PATH = "config.yaml"
-MIN_ARTICLES = 3
+MIN_ARTICLES = 2
 
 # ===== カテゴリ自動判定 =====
 _TRANSFER_KW = {

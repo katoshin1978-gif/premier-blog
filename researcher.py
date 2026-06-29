@@ -148,7 +148,7 @@ def _run_search(
             search_depth="basic",
             max_results=max_results,
             include_domains=include_domains,
-            days=7,    # 直近1週間の記事のみ
+            days=14,   # 直近2週間の記事（オフシーズン対応）
         )
         return resp.get("results", [])
     except Exception as e:

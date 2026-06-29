@@ -93,8 +93,12 @@ topic_worldcup:
   - Manuel Ugarte
   - Patrick Dorgu
   - Bryan Mbeumo
-  limit: 10
-  count: 2
+  - Rasmus Hojlund
+  - Marcus Rashford
+  - Amad Diallo
+  - Leny Yoro
+  limit: 15
+  count: 4
 illustration:
   enabled: false
 club_facts:
@@ -122,7 +126,7 @@ club_facts:
   manager: Roberto De Zerbi
 article:
   language: ja
-  min_sources: 3
+  min_sources: 2
   max_sources: 8
 wordpress:
   url: https://premier-blog.com

@@ -549,9 +549,12 @@ def find_topics_worldcup(config_path: str = "config.yaml") -> list[Topic]:
     if not _SSL_VERIFY:
         client.session.verify = False  # type: ignore[attr-defined]
 
-    # 上位10人までWC検索（全員だとAPIコストが高い）
-    queries = [f"{p} World Cup 2026" for p in players[:10]]
+    # 上位12人までWC検索（全員だとAPIコストが高い）
+    queries = [f"{p} World Cup 2026" for p in players[:12]]
     queries.append("Manchester United players World Cup 2026")
+    queries.append("World Cup 2026 Premier League stars goals")
+    queries.append("FIFA World Cup 2026 England squad news")
+    queries.append("FIFA World Cup 2026 Portugal Spain France squad")
 
     seen: set[str] = set()
     topics: list[Topic] = []
