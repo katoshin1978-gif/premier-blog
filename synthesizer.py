@@ -166,7 +166,7 @@ Idrissa Gueye=イドリサ・ゲイェ / Yoane Wissa=ヨアン・ウィサ /
 Sébastien Haller=セバスティアン・アレル / Lamine Yamal=ラミン・ヤマル /
 Pedri=ペドリ / Kylian Mbappé=キリアン・ムバッペ /
 Vinicius Junior=ビニシウス・ジュニオール / Jude Bellingham=ジュード・ベリンガム /
-Federico Valverde=フェデリコ・バルベルデ / Rodrygo=ロドリゴ /
+Marc Cucurella=マルク・ククレジャ / Federico Valverde=フェデリコ・バルベルデ / Rodrygo=ロドリゴ /
 Robert Lewandowski=ロベルト・レバンドフスキ / Harry Kane=ハリー・ケイン /
 Jamie Vardy=ジェイミー・ヴァーディ / Jesse Lingard=ジェシー・リンガード /
 Wayne Rooney=ウェイン・ルーニー / Paul Scholes=ポール・スコールズ /

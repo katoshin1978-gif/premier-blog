@@ -34,6 +34,15 @@ _BLOCKED_PLAYER_TITLE_KEYWORDS = {
     "shoreditch", "london studio",
     "school", "children",
     "dough", "cooking", "baking", "food",
+    # メディア・TV出演
+    "presenter", "pundit", "anchor", "host", "commentator", "broadcast",
+    "bbc", "sky sports", "itv", "talk show", "podcast", "panel",
+    # 商業・広告
+    "advert", "advertisement", "commercial", "sponsor", "promotion",
+    "launch", "unveil", "unveils", "product",
+    # 非サッカーイベント
+    "red carpet", "gala", "ball", "wedding", "party", "concert",
+    "book", "signing", "autobiography",
 }
 
 # 汎用すぎてどの記事にも使われてしまうファイルタイトルのキーワード
@@ -98,6 +107,23 @@ _TEAM_QUERIES: dict[str, str] = {
     "brighton": "Brighton Hove Albion football match",
     "west ham": "West Ham United football match",
     "everton": "Everton FC football match",
+}
+
+# 選手写真タイトルのサッカー関連度スコアリング用キーワード
+# タイトルにこれらが含まれるほど優先度が上がる
+_FOOTBALL_TITLE_KEYWORDS = {
+    "football", "footballer", "soccer",
+    "premier league", "bundesliga", "serie a", "la liga", "ligue 1",
+    "champions league", "europa league", "fa cup", "efl",
+    " afc", " fc", " utd", " united", " city",
+    " vs ", " v ", "match", "training", "pre-season", "preseason",
+    "goal", "kick", "tackle", "dribble",
+}
+
+# 同名の有名人との混同を防ぐ選手名クエリ上書き（lower()キー → 検索クエリ）
+# スコアリングで解決できない特殊ケース用のエスケープハッチ
+_PLAYER_QUERY_OVERRIDES: dict[str, str] = {
+    "alex scott": "Alex Scott AFC Bournemouth midfielder footballer",
 }
 
 # 名前抽出から除外する語
@@ -206,6 +232,24 @@ def _is_blocked_title(title: str) -> bool:
     # Wikimediaのファイル名はスペースが_になるため正規化してから照合
     tl = title.lower().replace("_", " ")
     return any(kw in tl for kw in _BLOCKED_TITLE_KEYWORDS)
+
+
+def _football_score(title: str, player_name: str = "", team: str = "") -> int:
+    """
+    Wikimediaファイルタイトルのサッカー関連度を返す。
+    同名の有名人（女性選手・タレント等）より実際のサッカー選手写真を優先するため使用。
+    スコアが高いほど優先的に試す。
+    """
+    tl = title.lower().replace("_", " ")
+    score = 0
+    if player_name and player_name.lower() in tl:
+        score += 5
+    if team and team.lower() in tl:
+        score += 10  # チーム名一致は最強シグナル
+    for kw in _FOOTBALL_TITLE_KEYWORDS:
+        if kw in tl:
+            score += 3
+    return score
 
 
 # -----------------------------------------------------------------------
@@ -708,11 +752,15 @@ def _search_wikimedia_player(
     session: requests.Session, player_name: str, team: str = ""
 ) -> tuple[bytes, str, str] | None:
     """選手個人の写真（縦長 or ほぼ正方形、400px以上）を取得する"""
-    queries = []
-    if team:
-        queries.append(f"{player_name} {team} football")  # チーム名+footballで試合写真に絞る
-        queries.append(f"{player_name} {team}")
-    queries += [f"{player_name} footballer", f"{player_name} football match"]
+    override = _PLAYER_QUERY_OVERRIDES.get(player_name.lower())
+    if override:
+        queries = [override]
+    else:
+        queries = []
+        if team:
+            queries.append(f"{player_name} {team} football")  # チーム名+footballで試合写真に絞る
+            queries.append(f"{player_name} {team}")
+        queries += [f"{player_name} footballer", f"{player_name} football match"]
     for query in queries:
         try:
             data = _wikimedia_get(session, {
@@ -744,17 +792,19 @@ def _search_wikimedia_player(
             # 横長すぎるもの（パノラマ等）は除外
             if h > 0 and w / h > 2.5:
                 continue
-            candidates.append((short, info, page))
+            fscore = _football_score(title, player_name, team)
+            candidates.append((fscore, short, info, page))
 
         if not candidates:
             continue
 
-        # 上位5件をシャッフルして順に試す（サイズ上限を超えた場合は次の候補へ）
-        candidates.sort(key=lambda x: x[0], reverse=True)
+        # サッカー関連スコア降順→解像度降順でソートして上位5件を試す
+        # スコアが高い＝タイトルにサッカー・チーム関連語が含まれる＝同名の非サッカー人物より優先
+        candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
         top = candidates[:5]
-        random.shuffle(top)
+        random.shuffle(top[:3])  # 同スコア帯内はランダム性を残す
         _get_db()
-        for _, info, page in top:
+        for fscore, _, info, page in top:
             title = page.get("title", player_name)
             filename = _make_filename(title)
             if _is_image_used(filename):
@@ -768,7 +818,7 @@ def _search_wikimedia_player(
                 continue
             attribution = _get_attribution(info.get("extmetadata", {}))
             _mark_image_used(filename)
-            print(f"[image_fetcher] 選手写真: {player_name} → {filename} ({len(content)//1024}KB) 元URL={info['url']}")
+            print(f"[image_fetcher] 選手写真: {player_name} → {filename} score={fscore} ({len(content)//1024}KB) 元URL={info['url']}")
             return content, filename, attribution
 
     return None
@@ -814,10 +864,14 @@ def fetch_player_images(
         if not img:
             tavily_key = os.environ.get("TAVILY_API_KEY", "")
             if tavily_key:
-                queries = []
-                if team:
-                    queries.append(f"{name} {team} footballer")
-                queries += [f"{name} footballer", f"{name} football match"]
+                override = _PLAYER_QUERY_OVERRIDES.get(name.lower())
+                if override:
+                    queries = [override]
+                else:
+                    queries = []
+                    if team:
+                        queries.append(f"{name} {team} footballer")
+                    queries += [f"{name} footballer", f"{name} football match"]
                 for q in queries:
                     img = _search_tavily_images(session, tavily_key, q, landscape=False)
                     if img:
