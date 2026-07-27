@@ -265,25 +265,36 @@ def _fetch_related_posts(
     base_url: str,
     ip_base_url: str,
     host_header: dict,
-    category_id: int,
+    category_ids: list[int],
     exclude_id: int,
     count: int = 4,
 ) -> list[dict]:
-    """同カテゴリの最新記事を取得して内部リンク用データを返す"""
-    try:
-        resp = requests.get(
-            f"{ip_base_url}/wp-json/wp/v2/posts",
-            params={"categories": category_id, "per_page": count + 1,
-                    "status": "publish", "orderby": "date", "order": "desc"},
-            headers={**_get_auth_header(), **host_header},
-            timeout=15,
-            verify=_SSL_VERIFY,
-        )
-        resp.raise_for_status()
-        posts = [p for p in resp.json() if p["id"] != exclude_id]
-        return posts[:count]
-    except Exception:
-        return []
+    """指定カテゴリ群（優先順）の最新記事を取得して内部リンク用データを返す。重複除去済み"""
+    seen: set[int] = {exclude_id}
+    posts: list[dict] = []
+    for category_id in category_ids:
+        if len(posts) >= count:
+            break
+        try:
+            resp = requests.get(
+                f"{ip_base_url}/wp-json/wp/v2/posts",
+                params={"categories": category_id, "per_page": count + 1,
+                        "status": "publish", "orderby": "date", "order": "desc"},
+                headers={**_get_auth_header(), **host_header},
+                timeout=15,
+                verify=_SSL_VERIFY,
+            )
+            resp.raise_for_status()
+            for p in resp.json():
+                if p["id"] in seen:
+                    continue
+                seen.add(p["id"])
+                posts.append(p)
+                if len(posts) >= count:
+                    break
+        except Exception:
+            continue
+    return posts[:count]
 
 
 # カテゴリID → アフィリエイトリンク設定
@@ -602,13 +613,15 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
     )
 
 
-def _build_related_html(posts: list[dict]) -> str:
-    if not posts:
-        return ""
+def _build_related_html(posts: list[dict], data_room_url: str = "") -> str:
     items = "".join(
         f'<li><a href="{p["link"]}">{p["title"]["rendered"]}</a></li>'
         for p in posts
     )
+    if data_room_url:
+        items += f'<li><a href="{data_room_url}">4大リーグ順位表・得点ランキングまとめ【データ室】</a></li>'
+    if not items:
+        return ""
     return f'<div class="related-posts"><h3>関連記事</h3><ul>{items}</ul></div>'
 
 
@@ -681,9 +694,10 @@ def publish_draft(
         _plain = " ".join(content_markdown.split())[:250]
         affiliate_html = _build_affiliate_html(primary_cat_id, title, _plain)
         related = _fetch_related_posts(
-            base_url, ip_base_url, host_header, primary_cat_id, result.post_id
+            base_url, ip_base_url, host_header, category_ids, result.post_id
         )
-        related_html = _build_related_html(related) if related else ""
+        data_room_url = f"{base_url}/data-room/"
+        related_html = _build_related_html(related, data_room_url)
         suffix = ""
         if affiliate_html:
             suffix += "\n" + affiliate_html

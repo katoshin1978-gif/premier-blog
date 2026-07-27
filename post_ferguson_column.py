@@ -211,9 +211,9 @@ def main():
 
     # アフィリエイトブロックを末尾に追加
     affiliate_html = _build_affiliate_html(CATEGORY_ID, TITLE)
-    related = _fetch_related_posts(base_url, ip_base_url, host_header, CATEGORY_ID, post_id)
+    related = _fetch_related_posts(base_url, ip_base_url, host_header, [CATEGORY_ID], post_id)
     from publisher import _build_related_html
-    related_html = _build_related_html(related) if related else ""
+    related_html = _build_related_html(related, f"{base_url}/data-room/")
 
     suffix = (affiliate_html or "") + (related_html or "")
     if suffix:

@@ -128,6 +128,16 @@ def init_db(db_path: str = DB_PATH) -> sqlite3.Connection:
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS previewed_matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id INTEGER UNIQUE NOT NULL,
+            match_title TEXT NOT NULL,
+            wp_post_id INTEGER,
+            wp_url TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS player_dedup (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             player_key TEXT NOT NULL,
@@ -187,6 +197,21 @@ def get_analyzed_match_ids(conn: sqlite3.Connection) -> set[int]:
 def mark_match_analyzed(conn: sqlite3.Connection, match_id: int, title: str, post_id: int, post_url: str) -> None:
     conn.execute(
         """INSERT OR IGNORE INTO analyzed_matches
+           (match_id, match_title, wp_post_id, wp_url, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (match_id, title, post_id, post_url, datetime.now().isoformat()),
+    )
+    conn.commit()
+
+
+def get_previewed_match_ids(conn: sqlite3.Connection) -> set[int]:
+    rows = conn.execute("SELECT match_id FROM previewed_matches").fetchall()
+    return {r[0] for r in rows}
+
+
+def mark_match_previewed(conn: sqlite3.Connection, match_id: int, title: str, post_id: int, post_url: str) -> None:
+    conn.execute(
+        """INSERT OR IGNORE INTO previewed_matches
            (match_id, match_title, wp_post_id, wp_url, created_at)
            VALUES (?, ?, ?, ?, ?)""",
         (match_id, title, post_id, post_url, datetime.now().isoformat()),
@@ -554,7 +579,7 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
                 print("=" * 60)
                 generated = generate_analysis_article(match, CONFIG_PATH)
                 if generated:
-                    cat_id = get_category_id("match-reviews", cfg)
+                    cat_id = get_category_ids(["match-reviews"], cfg)[0]
                     img_result = fetch_image(match.get("homeTeam", {}).get("name", "") + " football match")
                     featured_media_id = None
                     if img_result:
@@ -575,6 +600,42 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
                 print("[main] 分析対象の試合なし（直近5日に未分析の完了試合がない）")
         except Exception as e:
             print(f"[main] 分析記事生成エラー（続行）: {e}")
+
+    # マンU戦プレビュー記事（dry_run 時はスキップ）
+    if not dry_run:
+        try:
+            from match_analyzer import find_preview_match, generate_preview_article
+            previewed_ids = get_previewed_match_ids(conn)
+            preview_match = find_preview_match(previewed_ids)
+            if preview_match:
+                print("\n" + "=" * 60)
+                print("[main] マンU戦プレビュー記事を生成します")
+                print("=" * 60)
+                generated = generate_preview_article(preview_match, CONFIG_PATH)
+                if generated:
+                    cat_id = get_category_ids(["united"], cfg)[0]
+                    home_name = preview_match.get("homeTeam", {}).get("name", "")
+                    away_name = preview_match.get("awayTeam", {}).get("name", "")
+                    img_result = fetch_image(f"{home_name} {away_name} football match")
+                    featured_media_id = None
+                    if img_result:
+                        img_bytes, img_filename, img_attribution = img_result
+                        upload_result = upload_media(img_bytes, img_filename, img_attribution, CONFIG_PATH)
+                        if upload_result:
+                            featured_media_id, _ = upload_result
+                    result = publish_draft(
+                        generated.title, generated.content, CONFIG_PATH,
+                        featured_media_id=featured_media_id,
+                        category_id=cat_id,
+                        meta_description=generated.meta_description,
+                    )
+                    mark_match_previewed(conn, preview_match["id"], generated.title, result.post_id, result.url)
+                    print(f"[main] プレビュー記事投稿完了: Post ID={result.post_id}")
+                    print(f"[main] URL: {result.url}")
+            else:
+                print("[main] プレビュー対象のマンU戦なし（直近2日以内に予定なし）")
+        except Exception as e:
+            print(f"[main] プレビュー記事生成エラー（続行）: {e}")
 
     conn.close()
 
