@@ -359,9 +359,9 @@ def _post_article(
     print(f"[main] 投稿完了: Post ID={result.post_id}")
     print(f"[main] URL: {result.url}")
 
-    # Bing IndexNowでインデックス促進
+    # Bing IndexNowでインデックス促進（draftはURLが404を返すため送信対象外）
     indexnow_key = os.environ.get("BING_INDEXNOW_KEY", "")
-    if indexnow_key and result.url:
+    if indexnow_key and result.url and result.status == "publish":
         try:
             import requests as _req
             _req.get(
