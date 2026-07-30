@@ -175,6 +175,10 @@ _EXCLUDE_WORDS = {
     "well", "good", "best", "poor", "away", "home", "away",
     "dressing", "room", "after", "about", "against", "around",
     "beyond", "because", "between", "though", "through", "towards",
+    # 見出し・箇条書きに出やすい一般語（背番号一覧等のスクワッドページで誤抽出しやすい）
+    "detailed", "current", "complete", "full", "list", "listed", "ranking",
+    "rankings", "record", "records", "history", "historic", "historical",
+    "number", "numbers", "shirt", "kit", "official", "confirmed",
 }
 
 
@@ -258,11 +262,19 @@ def _football_score(title: str, player_name: str = "", team: str = "") -> int:
 
 def _extract_all_player_names(text: str) -> list[str]:
     """
-    テキスト中のTitle Case固有名詞を順番に抽出してペア（名 + 姓）のリストを返す。
+    テキスト中でテキスト上「実際に隣接している」Title Case単語ペア（名 + 姓）を抽出する。
     同じ人物が重複しないよう lower() でユニーク化する。
+
+    注意: 除外ワードを先にリストから取り除いてから残りを2個ずつペア化する実装だと、
+    間に除外ワード（"Squad" 等）を挟んで本来隣接していない単語同士
+    （例: "Detailed" + "Diogo"）を誤ってペアにしてしまう。そのため必ず元のテキスト上で
+    実際に隣接している単語同士のみをペア候補にする。
     """
     text = re.sub(r"^\[.*?\]\s*", "", text)
-    text = re.sub(r"['''""][^'''""]*['''""]", "", text)
+    # ダブルクォート（引用発言）のみ除去。シングルクォート/アポストロフィは
+    # "Everton's" のような所有格や O'Neil 等の姓に使われるため対象外にする
+    # （対象にすると開始/終了記号を誤認して間の姓名を丸ごと消してしまう）
+    text = re.sub(r'["""][^"""]*["""]', "", text)
 
     pairs: list[str] = []
     seen: set[str] = set()
@@ -285,37 +297,30 @@ def _extract_all_player_names(text: str) -> list[str]:
     for m in reversed(apostrophe_matches):
         text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
 
-    words = re.findall(r"\b[A-Z][a-z]{2,}\b", text)
-    candidates = [w for w in words if w.lower() not in _EXCLUDE_WORDS]
+    # テキスト上で直接隣接している大文字始まり単語ペアのみを候補にする（finditerは非重複走査）
+    for m in re.finditer(r"\b([A-Z][a-z]{2,})\s+([A-Z][a-z]{2,})\b", text):
+        w1, w2 = m.group(1), m.group(2)
+        if w1.lower() in _EXCLUDE_WORDS or w2.lower() in _EXCLUDE_WORDS:
+            continue
+        # 名前ペア判定: 両語とも4文字以上 or 片方が3文字で他方が5文字以上（Yan, Ben等の短い名前に対応）
+        if not ((len(w1) >= 4 and len(w2) >= 4) or (len(w1) == 3 and len(w2) >= 5)):
+            continue
+        pair = f"{w1} {w2}"
+        key = pair.lower()
+        if key not in seen:
+            seen.add(key)
+            pairs.append(pair)
 
-    i = 0
-    while i < len(candidates):
-        if i + 1 < len(candidates):
-            w1, w2 = candidates[i], candidates[i + 1]
-            # 名前ペア判定: 両語とも4文字以上 or 片方が3文字で他方が5文字以上（Yan, Ben等の短い名前に対応）
-            if (len(w1) >= 4 and len(w2) >= 4) or (len(w1) == 3 and len(w2) >= 5):
-                pair = f"{w1} {w2}"
-                key = pair.lower()
-                if key not in seen:
-                    seen.add(key)
-                    pairs.append(pair)
-                i += 2
-            else:
-                # 片方が短い場合は単語単位で処理
-                if len(w1) >= 5:
-                    key = w1.lower()
-                    if key not in seen:
-                        seen.add(key)
-                        pairs.append(w1)
-                i += 1
-        else:
-            solo = candidates[i]
-            if len(solo) >= 5:
-                key = solo.lower()
-                if key not in seen:
-                    seen.add(key)
-                    pairs.append(solo)
-            i += 1
+    # ペアになれなかった単独の5文字以上の単語（既にペアで使われた単語は除く）
+    used_words = {w.lower() for p in pairs for w in p.split()}
+    for w in re.findall(r"\b[A-Z][a-z]{4,}\b", text):
+        if w.lower() in _EXCLUDE_WORDS or w.lower() in used_words:
+            continue
+        key = w.lower()
+        if key not in seen:
+            seen.add(key)
+            pairs.append(w)
+
     return pairs
 
 
@@ -643,11 +648,16 @@ def _is_illustration_enabled(config_path: str = "config.yaml") -> bool:
         return False
 
 
-def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, str, str] | None:
+def fetch_image(topic: str, config_path: str = "config.yaml", primary_topic: str = "") -> tuple[bytes, str, str] | None:
     """
     アイキャッチ用の横長画像を取得する。
     illustration.enabled=true の場合は Flux でイラスト生成。
     それ以外は Wikimedia Commons → Pexels の順でフォールバック。
+
+    primary_topic: 記事本来の主題（生成された記事タイトル等）。指定されていれば
+    ソース記事タイトルを結合したtopic全体より優先して選手名抽出を行う。
+    topicにはソース記事タイトルなど周辺情報が混ざっており、そちらだけから抽出すると
+    無関係な選手名を誤って拾うことがあるため。
     Returns (image_bytes, filename, attribution) or None.
     """
     session = requests.Session()
@@ -655,9 +665,16 @@ def fetch_image(topic: str, config_path: str = "config.yaml") -> tuple[bytes, st
 
     tl = topic.lower()
     team_query = next((q for kw, q in _TEAM_QUERIES.items() if kw in tl), None)
-    players = _extract_all_player_names(topic)
-    # 2語（姓名）のペアのみアイキャッチクエリに使用（単語だけでは誤検出しやすいため）
-    player = next((p for p in players if " " in p), None)
+
+    # 記事本来の主題を優先して選手名抽出。見つからなければ結合テキスト全体にフォールバック
+    player = None
+    if primary_topic:
+        primary_players = _extract_all_player_names(primary_topic)
+        player = next((p for p in primary_players if " " in p), None)
+    if not player:
+        players = _extract_all_player_names(topic)
+        # 2語（姓名）のペアのみアイキャッチクエリに使用（単語だけでは誤検出しやすいため）
+        player = next((p for p in players if " " in p), None)
 
     queries = []
     if player:

@@ -141,15 +141,18 @@ def _run_search(
     query: str,
     include_domains: list[str],
     max_results: int,
+    days: int | None = 14,
 ) -> list[dict]:
     try:
-        resp = client.search(
+        params: dict = dict(
             query=query,
             search_depth="basic",
             max_results=max_results,
             include_domains=include_domains,
-            days=14,   # 直近2週間の記事（オフシーズン対応）
         )
+        if days is not None:
+            params["days"] = days  # 直近N日の記事に限定（オフシーズン対応、既定14日）
+        resp = client.search(**params)
         return resp.get("results", [])
     except Exception as e:
         print(f"[researcher] 検索失敗 '{query}': {e}")
@@ -174,7 +177,9 @@ def search_articles(query: str, config_path: str = "config.yaml", context: str =
     # 日本語トピックは英語クエリに変換してから検索
     search_base = _translate_to_english_query(query) if _is_japanese(query) else query
     search_query = _build_query(search_base, context)
-    all_items = _run_search(client, search_query, include_domains, max_results)
+    # ロングテール（歴代記録・背番号一覧等）は直近ニュースではないため期間制限を外す
+    days = None if context == "longtail" else 14
+    all_items = _run_search(client, search_query, include_domains, max_results, days=days)
 
     # Man United 関連トピックの場合は MEN・Metro を含む専用クエリを追加実行（defaultコンテキストのみ）
     if context == "default" and (_is_man_united_topic(query) or _is_man_united_topic(search_base)):

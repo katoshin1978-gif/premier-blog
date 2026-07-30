@@ -322,7 +322,7 @@ def _post_article(
     if articles:
         src_titles = " ".join(a.title for a in articles if a.title)
         img_topic = f"{img_topic} {src_titles}"
-    img_result = fetch_image(img_topic)
+    img_result = fetch_image(img_topic, primary_topic=topic.title)
     if img_result:
         img_bytes, img_filename, img_attribution = img_result
         upload_result = upload_media(img_bytes, img_filename, img_attribution, CONFIG_PATH)
@@ -566,6 +566,36 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             except Exception as e:
                 print(f"[main] WC記事エラー: {e}")
         print(f"[main] WC記事完了: {wc_success}/{count_wc} 件")
+
+    # ===== ロングテールキーワード記事パイプライン =====
+    count_longtail = cfg.get("topic_longtail", {}).get("count", 1)
+    if count_longtail > 0 and not topic_override:
+        print("\n" + "=" * 60)
+        print(f"[main] ロングテール記事を {count_longtail} 件生成します")
+        print("=" * 60)
+        from topic_finder import find_topics_longtail
+        longtail_topics = find_topics_longtail(CONFIG_PATH)
+        longtail_unprocessed = [t for t in longtail_topics if not is_processed(conn, t) and topic_hash(t) not in used_hashes]
+        longtail_success = 0
+        for i in range(count_longtail):
+            remaining = [t for t in longtail_unprocessed if topic_hash(t) not in used_hashes]
+            if not remaining:
+                print(f"[main] ロングテールクエリなし（在庫消化済み）。{longtail_success}/{count_longtail} 記事生成済み")
+                break
+            topic, search_results, articles = _find_valid_topic(remaining, context="longtail")
+            if topic is None:
+                print(f"[main] ロングテール: 全クエリで記事収集失敗")
+                break
+            used_hashes.add(topic_hash(topic))
+
+            print(f"[main] ロングテール採用クエリ: {topic.title} (カテゴリ: {topic.category})")
+            try:
+                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category=topic.category)
+                if ok:
+                    longtail_success += 1
+            except Exception as e:
+                print(f"[main] ロングテール記事エラー: {e}")
+        print(f"[main] ロングテール記事完了: {longtail_success}/{count_longtail} 件")
 
     # 試合分析記事（dry_run 時はスキップ）
     if not dry_run:

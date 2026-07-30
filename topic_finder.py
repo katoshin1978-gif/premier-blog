@@ -174,6 +174,7 @@ class Topic:
     title: str
     url: str | None = None
     score: int = 0
+    category: str | None = None
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -379,6 +380,66 @@ def get_trending_topics(limit: int = 10, config_path: str = "config.yaml") -> li
     return topics[:limit]
 
 
+def get_journalist_topics(
+    names: list[str],
+    limit: int = 10,
+    config_path: str = "config.yaml",
+    content_filter=None,
+) -> list[Topic]:
+    """
+    Fabrizio Romano・David Ornstein等の記者本人のツイートはNitterが軒並み機能停止のため
+    直接取得できない。代わりに「{記者名} exclusive/here we go」等でTavily検索し、
+    ホワイトリスト内メディアがその記者のスクープを報じた二次記事をトピックとして拾う。
+    """
+    from tavily import TavilyClient
+
+    if content_filter is None:
+        content_filter = _is_pl_football_content
+
+    config = load_config(config_path)
+    whitelist = config["sources"]["whitelist"]
+    include_domains = []
+    for entry in whitelist:
+        domain = entry.split("/")[0]
+        if domain not in include_domains:
+            include_domains.append(domain)
+
+    client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+    if not _SSL_VERIFY:
+        client.session.verify = False  # type: ignore[attr-defined]
+
+    search_queries = [f"{name} exclusive here we go transfer news" for name in names]
+
+    seen: set[str] = set()
+    all_items: list[dict] = []
+    for query in search_queries:
+        try:
+            resp = client.search(query, search_depth="advanced", max_results=8, include_domains=include_domains)
+            all_items.extend(resp.get("results", []))
+        except Exception as e:
+            print(f"[topic_finder] 記者クエリ失敗 '{query}': {e}")
+
+    topics = []
+    for item in all_items:
+        url = item.get("url", "")
+        title = item.get("title", "").strip()
+        if not title or not url or not _is_article_url(url) or not _is_article_title(title):
+            continue
+        if not content_filter(title, url):
+            continue
+        normalized = re.sub(r"\s+", " ", title.lower())[:40]
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+
+        score = int(item.get("score", 0.0) * 10000)
+        topics.append(Topic(title=title, url=url, score=score))
+
+    topics.sort(key=lambda t: t.score, reverse=True)
+    print(f"[topic_finder] 記者経由: {len(topics)} 件取得")
+    return topics[:limit]
+
+
 def get_reddit_topics(limit: int = 5) -> list[Topic]:
     reddit = praw.Reddit(
         client_id=os.environ["REDDIT_CLIENT_ID"],
@@ -409,12 +470,33 @@ def get_fixed_topics(themes: list[str]) -> list[Topic]:
     return [Topic(title=theme) for theme in themes]
 
 
+def find_topics_longtail(config_path: str = "config.yaml") -> list[Topic]:
+    """
+    ロングテールキーワード用の固定クエリ集からトピックを生成する。
+    大手メディアが専用ページを作らない具体的な事実ベースの検索クエリ
+    （背番号一覧・歴代記録・ルール解説等）を対象に、カテゴリごとに
+    まとめて管理する。1クエリにつき1記事のみ生成想定（is_processedで重複排除）。
+    """
+    config = load_config(config_path)
+    cfg = config.get("topic_longtail", {})
+
+    topics: list[Topic] = []
+    for group in cfg.get("groups", []):
+        category = group.get("category", "column")
+        for theme in group.get("themes", []):
+            topics.append(Topic(title=theme, category=category))
+
+    print(f"[topic_finder] ロングテール: {len(topics)} 件のクエリを用意")
+    return topics
+
+
 def find_topics_transfers(config_path: str = "config.yaml") -> list[Topic]:
     """移籍ニュース専用トピック取得（Twitter トレンド優先、Man United 以外）"""
     config = load_config(config_path)
     cfg = config.get("topic_transfers", {})
 
     nitter_accounts = cfg.get("nitter_accounts", ["FabrizioRomano"])
+    journalist_names = cfg.get("journalist_names", [])
     rss_feeds = cfg.get("rss_feeds", [])
     limit = cfg.get("limit", 10)
     exclude_man_united = cfg.get("exclude_man_united", True)
@@ -431,6 +513,15 @@ def find_topics_transfers(config_path: str = "config.yaml") -> list[Topic]:
             content_filter=transfer_filter,
         )
         topics.extend(nitter_topics)
+
+    if journalist_names:
+        journalist_topics = get_journalist_topics(
+            names=journalist_names,
+            limit=limit,
+            config_path=config_path,
+            content_filter=transfer_filter,
+        )
+        topics.extend(journalist_topics)
 
     if rss_feeds:
         rss_topics = get_rss_topics(

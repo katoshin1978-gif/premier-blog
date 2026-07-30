@@ -59,6 +59,10 @@ topic_transfers:
   - FabrizioRomano
   - David_Ornstein
   - DiMarzio
+  journalist_names:
+  - Fabrizio Romano
+  - David Ornstein
+  - Gianluca Di Marzio
   rss_feeds:
   - https://www.football-italia.net/feed
   - https://www.90min.com/feed
@@ -81,6 +85,30 @@ topic_europe:
   - https://www.mundodeportivo.com/rss/futbol.xml
   limit: 15
   count: 2
+topic_longtail:
+  count: 1
+  groups:
+  - category: united
+    themes:
+    - マンチェスターユナイテッド 背番号一覧 最新シーズン
+    - マンチェスターユナイテッド 歴代背番号7を背負った選手一覧
+    - マンチェスターユナイテッド 歴代得点王
+    - マンチェスターユナイテッド 歴代監督一覧と成績
+    - マンチェスターユナイテッド 移籍金 歴代トップ10
+    - マンチェスターユナイテッド 生え抜き選手一覧
+  - category: data
+    themes:
+    - プレミアリーグ 歴代得点王一覧
+    - プレミアリーグ 歴代アシスト王一覧
+    - プレミアリーグ 優勝回数 クラブ別ランキング
+    - プレミアリーグ 連勝記録 無敗記録の歴史
+    - プレミアリーグ 最年少出場記録
+    - プレミアリーグ 今季の昇格降格争い 最新順位表
+  - category: column
+    themes:
+    - サッカー VAR判定の基準を分かりやすく解説
+    - プレミアリーグ レジェンド列伝 語り継がれる名選手たち
+    - サッカー史に残る伝説の一戦 忘れられない名勝負
 topic_worldcup:
   players:
   - Bruno Fernandes
