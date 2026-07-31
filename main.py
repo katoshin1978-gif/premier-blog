@@ -308,6 +308,11 @@ def _post_article(
         mark_processed(conn, topic, 0, "")  # 再選択されないよう記録
         return False
 
+    if generated.content.strip() == "SKIP_LOW_QUALITY":
+        print(f"[main] 生成品質不足のためスキップ（投稿しない）: {topic.title}")
+        mark_processed(conn, topic, 0, "")  # 再選択されないよう記録
+        return False
+
     if dry_run:
         print("\n[main] DRY RUN モード - WordPress には投稿しません")
         print("-" * 60)
@@ -445,8 +450,9 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
         print(f"[main] 採用トピック: {topic.title}")
 
         try:
-            _post_article(topic, articles, search_results, dry_run, conn, cfg)
-            success_count += 1
+            ok = _post_article(topic, articles, search_results, dry_run, conn, cfg)
+            if ok:
+                success_count += 1
         except Exception as e:
             print(f"[main] 記事生成・投稿エラー: {e}")
             # エラーがあっても次のトピックへ進む

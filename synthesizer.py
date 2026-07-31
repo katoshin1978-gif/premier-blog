@@ -339,6 +339,12 @@ def generate_article(
     content = _normalize_player_names(content)
     title = _extract_title(content)
 
+    # タイトル行が見つからない、または本文が極端に短い場合はフォーマット崩壊＝
+    # ソース不足でClaudeが定型の謝罪文を返したケース。記事として投稿する価値がないためスキップ。
+    if title is None or len(content.strip()) < 300:
+        print(f"[synthesizer] 記事生成失敗と判定（フォーマット不正/内容不足）→ スキップ: topic='{topic}'")
+        return GeneratedArticle(title="", content="SKIP_LOW_QUALITY", sources=search_results)
+
     print(f"[synthesizer] 記事生成完了: {title}")
     print(f"[synthesizer] 使用トークン: input={response.usage.input_tokens}, output={response.usage.output_tokens}")
 
@@ -400,12 +406,18 @@ def _extract_seo_meta(content: str) -> tuple[str, str]:
     return content, ""
 
 
-def _extract_title(markdown: str) -> str:
+def _extract_title(markdown: str) -> str | None:
+    """
+    '# タイトル' 行を抽出する。見つからない場合は None を返す。
+    見つからない＝Claudeが指定フォーマットに従わなかった（ソース不足で
+    謝罪文だけ返す等）ことを示す強いシグナルなので、呼び出し側で
+    記事生成失敗として扱いスキップする。
+    """
     for line in markdown.splitlines():
         line = line.strip()
         if line.startswith("# "):
             return line.lstrip("# ").strip()
-    return "プレミアリーグ最新情報"
+    return None
 
 
 if __name__ == "__main__":

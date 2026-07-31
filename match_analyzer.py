@@ -316,6 +316,10 @@ def generate_analysis_article(
     content, meta_description = _extract_seo_meta(content)
     title = _extract_title(content)
 
+    if title is None or len(content.strip()) < 300:
+        print(f"[match_analyzer] 分析記事生成失敗と判定（フォーマット不正/内容不足）→ スキップ")
+        return None
+
     print(f"[match_analyzer] 分析記事生成完了: {title}")
     print(f"[match_analyzer] 使用トークン: input={response.usage.input_tokens}, output={response.usage.output_tokens}")
 
@@ -446,6 +450,10 @@ def generate_preview_article(
     content = response.content[0].text
     content, meta_description = _extract_seo_meta(content)
     title = _extract_title(content)
+
+    if title is None or len(content.strip()) < 300:
+        print(f"[match_analyzer] プレビュー記事生成失敗と判定（フォーマット不正/内容不足）→ スキップ")
+        return None
 
     print(f"[match_analyzer] プレビュー記事生成完了: {title}")
     print(f"[match_analyzer] 使用トークン: input={response.usage.input_tokens}, output={response.usage.output_tokens}")
