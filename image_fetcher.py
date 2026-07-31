@@ -109,6 +109,13 @@ _TEAM_QUERIES: dict[str, str] = {
     "everton": "Everton FC football match",
 }
 
+# アイキャッチ検索クエリから「意味のある」キーワードを抽出する際に無視する一般語
+# （これらしか残らない場合は関連度チェックを行わず全候補を許可する＝汎用フォールバック用クエリ）
+_GENERIC_QUERY_STOPWORDS = {
+    "football", "soccer", "match", "matches", "action", "game", "games",
+    "premier", "league", "the", "and", "photo", "photograph", "picture",
+}
+
 # 選手写真タイトルのサッカー関連度スコアリング用キーワード
 # タイトルにこれらが含まれるほど優先度が上がる
 _FOOTBALL_TITLE_KEYWORDS = {
@@ -236,6 +243,16 @@ def _is_blocked_title(title: str) -> bool:
     # Wikimediaのファイル名はスペースが_になるため正規化してから照合
     tl = title.lower().replace("_", " ")
     return any(kw in tl for kw in _BLOCKED_TITLE_KEYWORDS)
+
+
+def _extract_query_keywords(query: str) -> list[str]:
+    """
+    検索クエリから関連度チェックに使う意味のある単語だけを抽出する。
+    'football'/'match'/'premier'/'league' 等の一般語しか残らない場合は
+    空リストを返す（＝汎用フォールバッククエリとして関連度チェックをスキップする合図）。
+    """
+    words = re.findall(r"[A-Za-z]+", query)
+    return [w.lower() for w in words if len(w) >= 3 and w.lower() not in _GENERIC_QUERY_STOPWORDS]
 
 
 def _football_score(title: str, player_name: str = "", team: str = "") -> int:
@@ -492,9 +509,16 @@ def _search_thesportsdb_league(
 # -----------------------------------------------------------------------
 
 def _search_wikimedia_landscape(
-    session: requests.Session, query: str
+    session: requests.Session, query: str, require_relevance: bool = True
 ) -> tuple[bytes, str, str] | None:
-    """アイキャッチ用写真を取得する（縦長もOK、pad_to_landscapeで横長化する）"""
+    """
+    アイキャッチ用写真を取得する（縦長もOK、pad_to_landscapeで横長化する）。
+
+    require_relevance=True の場合、クエリからチーム名・選手名などの意味のある
+    キーワードを抽出し、タイトルにそのキーワードが実際に含まれる候補のみを許可する。
+    Wikimedia の gsrsearch はあいまい一致（説明文・カテゴリにも一致）のため、
+    これがないとタイトルに無関係な高解像度画像が選ばれてしまうことがある。
+    """
     try:
         data = _wikimedia_get(session, {
             "action": "query", "generator": "search",
@@ -520,6 +544,17 @@ def _search_wikimedia_landscape(
 
     if not candidates:
         return None
+
+    keywords = _extract_query_keywords(query) if require_relevance else []
+    if keywords:
+        relevant = [
+            c for c in candidates
+            if any(kw in c[2].get("title", "").lower().replace("_", " ") for kw in keywords)
+        ]
+        if not relevant:
+            print(f"[image_fetcher] 関連画像なし（キーワード不一致）: query='{query}' 候補{len(candidates)}件中0件が一致")
+            return None
+        candidates = relevant
 
     # 上位10件をシャッフルして順に試す（サイズ上限・ブロック・使用済みをチェック）
     candidates.sort(key=lambda x: x[0], reverse=True)
@@ -733,7 +768,8 @@ def fetch_image(topic: str, config_path: str = "config.yaml", primary_topic: str
                     break
     if not photo_result:
         for fallback_q in ["Association football", "football stadium", "soccer match"]:
-            photo_result = _search_wikimedia_landscape(session, fallback_q)
+            # 最終フォールバックは意図的に汎用クエリのため関連度チェックはスキップ
+            photo_result = _search_wikimedia_landscape(session, fallback_q, require_relevance=False)
             if photo_result:
                 print(f"[image_fetcher] 最終フォールバック画像使用: {fallback_q}")
                 break
@@ -814,6 +850,14 @@ def _search_wikimedia_player(
 
         if not candidates:
             continue
+
+        # スコア0（タイトルに選手名・チーム名・サッカー関連語が一切含まれない）候補は
+        # 同名の無関係な人物・被写体である可能性が高いため除外し、次のクエリ変種に委ねる
+        positive = [c for c in candidates if c[0] > 0]
+        if not positive:
+            print(f"[image_fetcher] 選手写真候補すべて関連度0（無関係の可能性）: query='{query}'")
+            continue
+        candidates = positive
 
         # サッカー関連スコア降順→解像度降順でソートして上位5件を試す
         # スコアが高い＝タイトルにサッカー・チーム関連語が含まれる＝同名の非サッカー人物より優先
