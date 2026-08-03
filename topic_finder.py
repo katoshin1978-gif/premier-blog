@@ -380,6 +380,60 @@ def get_trending_topics(limit: int = 10, config_path: str = "config.yaml") -> li
     return topics[:limit]
 
 
+def get_friendly_topics(limit: int = 5, config_path: str = "config.yaml") -> list[Topic]:
+    """
+    プレシーズン・国際親善試合の結果はPL向けRSSフィードでは
+    ほとんど拾われない（大会外の試合のため）ので、Tavily検索で専用に補完する。
+    """
+    from tavily import TavilyClient
+
+    config = load_config(config_path)
+    whitelist = config["sources"]["whitelist"]
+    include_domains = []
+    for entry in whitelist:
+        domain = entry.split("/")[0]
+        if domain not in include_domains:
+            include_domains.append(domain)
+
+    client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+    if not _SSL_VERIFY:
+        client.session.verify = False  # type: ignore[attr-defined]
+
+    search_queries = [
+        "Manchester United preseason friendly result",
+        "Manchester United friendly match report",
+    ]
+
+    seen: set[str] = set()
+    all_items: list[dict] = []
+    for query in search_queries:
+        try:
+            resp = client.search(query, search_depth="advanced", max_results=8, include_domains=include_domains)
+            all_items.extend(resp.get("results", []))
+        except Exception as e:
+            print(f"[topic_finder] 親善試合クエリ失敗 '{query}': {e}")
+
+    topics = []
+    for item in all_items:
+        url = item.get("url", "")
+        title = item.get("title", "").strip()
+        if not title or not url or not _is_article_url(url) or not _is_article_title(title):
+            continue
+        if not _is_pl_football_content(title, url):
+            continue
+        normalized = re.sub(r"\s+", " ", title.lower())[:40]
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+
+        score = int(item.get("score", 0.0) * 10000)
+        topics.append(Topic(title=title, url=url, score=score))
+
+    topics.sort(key=lambda t: t.score, reverse=True)
+    print(f"[topic_finder] 親善試合: {len(topics)} 件取得")
+    return topics[:limit]
+
+
 def get_journalist_topics(
     names: list[str],
     limit: int = 10,
@@ -697,9 +751,25 @@ def find_topics(config_path: str = "config.yaml") -> list[Topic]:
                     man_united_boost=man_united_boost,
                 )
 
-            combined = rss_topics + nitter_topics
+            try:
+                friendly_topics = get_friendly_topics(limit=5, config_path=config_path)
+                for t in friendly_topics:
+                    if man_united_boost > 1.0 and _is_man_united_related(t.title):
+                        t.score = int(t.score * man_united_boost)
+            except Exception as e:
+                print(f"[topic_finder] 親善試合トピック取得失敗 ({e})")
+                friendly_topics = []
+
+            combined = rss_topics + nitter_topics + friendly_topics
             combined.sort(key=lambda t: t.score, reverse=True)
-            combined = combined[:limit]
+            seen_c: set[str] = set()
+            deduped_c: list[Topic] = []
+            for t in combined:
+                key = re.sub(r"\s+", " ", t.title.lower())[:40]
+                if key not in seen_c:
+                    seen_c.add(key)
+                    deduped_c.append(t)
+            combined = deduped_c[:limit]
 
             if combined:
                 mu_count = sum(1 for t in combined if _is_man_united_related(t.title))
