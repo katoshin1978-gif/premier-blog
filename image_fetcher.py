@@ -41,7 +41,10 @@ _BLOCKED_PLAYER_TITLE_KEYWORDS = {
     "advert", "advertisement", "commercial", "sponsor", "promotion",
     "launch", "unveil", "unveils", "product",
     # 非サッカーイベント
-    "red carpet", "gala", "ball", "wedding", "party", "concert",
+    # 注意: "ball" は部分一致のため "football"/"footballer" 自体に誤ヒットして
+    # サッカー選手の正常な写真まで全てブロックしてしまう。"gala ball" のように
+    # 具体的なフレーズのみを対象にする
+    "red carpet", "gala", "gala ball", "wedding", "party", "concert",
     "book", "signing", "autobiography",
 }
 
@@ -180,6 +183,9 @@ _EXCLUDE_WORDS = {
     "open", "close", "clear", "help", "helped", "helps",
     "amid", "round", "past", "plus", "less", "more", "most", "much",
     "well", "good", "best", "poor", "away", "home", "away",
+    # 見出し疑問文冒頭に来る助動詞（"Can Marcus Rashford be..." のように
+    # 隣接する固有名詞と誤ってペア抽出されてしまうのを防ぐ）
+    "can", "should", "does", "did", "might", "must",
     "dressing", "room", "after", "about", "against", "around",
     "beyond", "because", "between", "though", "through", "towards",
     # 見出し・箇条書きに出やすい一般語（背番号一覧等のスクワッドページで誤抽出しやすい）
