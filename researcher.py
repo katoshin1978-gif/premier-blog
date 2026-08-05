@@ -35,6 +35,7 @@ _SECTION_PATTERNS = [
     re.compile(r'/(scores-fixtures|scores_fixtures|transfer-news|transfer-centre|transfer-gossip|gossip-column)/?$', re.I),
     re.compile(r'/premier-league/(scores|fixtures|table|results|standings|scoreboard)/?$', re.I),
     re.compile(r'/transfers/wettbewerb/', re.I),  # transfermarkt 全移籍一覧ページを除外
+    re.compile(r'/(topics?|author|authors|profile|contributors?|journalist|staff|reporter)/', re.I),  # 記者プロフィール・タグアーカイブページを除外
 ]
 
 # Man United 関連と判定するキーワード
