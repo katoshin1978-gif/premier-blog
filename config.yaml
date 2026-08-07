@@ -110,6 +110,12 @@ topic_longtail:
     - プレミアリーグ レジェンド列伝 語り継がれる名選手たち
     - サッカー史に残る伝説の一戦 忘れられない名勝負
 topic_worldcup:
+  # この期間内のみパイプラインを実行する（大会終了後に旧スカッド記事等が
+  # 延々と再生成されるのを防ぐ）。次の大会（欧州選手権・W杯等）が近づいたら
+  # start/end を更新すること。
+  active_window:
+    start: "2026-06-01"
+    end: "2026-07-26"
   players:
   - Bruno Fernandes
   - Kobbie Mainoo

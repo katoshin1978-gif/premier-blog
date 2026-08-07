@@ -78,6 +78,23 @@ _UNITED_KW = {
 }
 
 
+def _is_worldcup_window_active(cfg: dict) -> bool:
+    """
+    topic_worldcup.active_window で指定された期間内かどうかを判定する。
+    未設定の場合は後方互換のため常に有効とみなす。
+    """
+    window = cfg.get("topic_worldcup", {}).get("active_window")
+    if not window:
+        return True
+    try:
+        start = datetime.strptime(window["start"], "%Y-%m-%d").date()
+        end = datetime.strptime(window["end"], "%Y-%m-%d").date()
+        return start <= datetime.now().date() <= end
+    except Exception as e:
+        print(f"[main] active_window の解析に失敗、常時有効として扱う: {e}")
+        return True
+
+
 def determine_category_slugs(topic: str) -> list[str]:
     """トピック文字列から該当するカテゴリスラッグをすべて返す（複数可）"""
     lower = topic.lower()
@@ -538,6 +555,9 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
 
     # ===== ワールドカップ MU選手記事パイプライン =====
     count_wc = cfg.get("topic_worldcup", {}).get("count", 2)
+    if count_wc > 0 and not topic_override and not _is_worldcup_window_active(cfg):
+        print("[main] W杯企画: active_window 外のためスキップ")
+        count_wc = 0
     if count_wc > 0 and not topic_override:
         print("\n" + "=" * 60)
         print(f"[main] WC記事を {count_wc} 件生成します（MU選手のW杯活躍）")
