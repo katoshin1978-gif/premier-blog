@@ -352,7 +352,7 @@ def get_trending_topics(limit: int = 10, config_path: str = "config.yaml") -> li
 
     for query in search_queries:
         try:
-            resp = client.search(query, search_depth="advanced", max_results=12, include_domains=include_domains)
+            resp = client.search(query, search_depth="advanced", max_results=12, include_domains=include_domains, days=3)
             all_items.extend(resp.get("results", []))
         except Exception as e:
             print(f"[topic_finder] クエリ失敗 '{query}': {e}")
@@ -408,7 +408,7 @@ def get_friendly_topics(limit: int = 5, config_path: str = "config.yaml") -> lis
     all_items: list[dict] = []
     for query in search_queries:
         try:
-            resp = client.search(query, search_depth="advanced", max_results=8, include_domains=include_domains)
+            resp = client.search(query, search_depth="advanced", max_results=8, include_domains=include_domains, days=14)
             all_items.extend(resp.get("results", []))
         except Exception as e:
             print(f"[topic_finder] 親善試合クエリ失敗 '{query}': {e}")
@@ -468,7 +468,7 @@ def get_journalist_topics(
     all_items: list[dict] = []
     for query in search_queries:
         try:
-            resp = client.search(query, search_depth="advanced", max_results=8, include_domains=include_domains)
+            resp = client.search(query, search_depth="advanced", max_results=8, include_domains=include_domains, days=7)
             all_items.extend(resp.get("results", []))
         except Exception as e:
             print(f"[topic_finder] 記者クエリ失敗 '{query}': {e}")
@@ -706,7 +706,7 @@ def find_topics_worldcup(config_path: str = "config.yaml") -> list[Topic]:
 
     for query in queries:
         try:
-            resp = client.search(query, search_depth="basic", max_results=5, include_domains=include_domains)
+            resp = client.search(query, search_depth="basic", max_results=5, include_domains=include_domains, days=14)
             for item in resp.get("results", []):
                 url = item.get("url", "")
                 title = item.get("title", "").strip()
