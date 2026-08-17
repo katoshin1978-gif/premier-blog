@@ -517,7 +517,8 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
     rakuten_id = os.environ.get("RAKUTEN_AFFILIATE_ID", "")
     sptv_id    = os.environ.get("SPTV_AFFILIATE_ID", "")
     dazn_url   = os.environ.get("DAZN_AFFILIATE_URL", "")
-    if not amazon_id and not rakuten_id and not sptv_id and not dazn_url:
+    agoda_id   = os.environ.get("AGODA_AFFILIATE_ID", "")
+    if not amazon_id and not rakuten_id and not sptv_id and not dazn_url and not agoda_id:
         return ""
 
     # topic_titleが渡された場合はAIで動的キーワードを生成してrakutenカードに使う
@@ -571,18 +572,20 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
                         search_url, "🛒", "楽天市場", "#BF0000",
                         item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
                     ))
-        elif item["store"] == "sptv" and sptv_id:
-            url = f"https://px.a8.net/svt/ejp?a8mat={sptv_id}"
-            cards.append(_aff_card_icon(
-                url, "📺", "スカパー!", "#003087",
-                item["label"], "プレミアリーグ全試合を生中継", "無料体験"
-            ))
         elif item["store"] == "rakuten_tv" and rakuten_id:
             url = f"https://hb.afl.rakuten.co.jp/ichiba/{rakuten_id}/?pc=https%3A%2F%2Ftv.rakuten.co.jp%2Fsports%2Fsoccer%2F"
             cards.append(_aff_card_icon(
                 url, "📺", "楽天TV", "#BF0000",
                 "UEFA CL・EL見放題", "楽天ポイントで視聴できる", "詳細を見る"
             ))
+
+    # スカパー!（全カテゴリ共通）
+    if sptv_id:
+        sptv_url = f"https://px.a8.net/svt/ejp?a8mat={sptv_id}"
+        cards.append(_aff_card_icon(
+            sptv_url, "📺", "スカパー!", "#003087",
+            "プレミアリーグ全試合を生中継", "スカパー!で視聴できる", "無料体験"
+        ))
 
     # DAZN（全カテゴリ共通）
     if dazn_url:
@@ -597,6 +600,14 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
         cards.append(_aff_card_icon(
             prime_url, "▶", "Amazon Prime", "#00A8E1",
             "Prime Video スポーツ・映画見放題", "30日間無料体験あり", "無料で試す"
+        ))
+
+    # agoda（全カテゴリ共通）
+    if agoda_id:
+        agoda_url = f"https://px.a8.net/svt/ejp?a8mat={agoda_id}"
+        cards.append(_aff_card_icon(
+            agoda_url, "🏨", "agoda", "#EC1C43",
+            "海外ホテル予約", "現地観戦の宿探しはこちら", "予約する"
         ))
 
     if not cards:
