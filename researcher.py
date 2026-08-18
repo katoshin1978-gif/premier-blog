@@ -98,9 +98,38 @@ def _is_japanese(text: str) -> bool:
     return False
 
 
-def _translate_to_english_query(topic: str) -> str:
-    """日本語トピックをTavily検索用の英語クエリに変換する（Claude API使用）"""
+_EN_STOPWORDS = {
+    "the", "a", "an", "of", "to", "for", "and", "in", "on", "with", "is",
+    "are", "at", "from", "as", "his", "her", "he", "she", "will", "has",
+    "have", "been", "be", "it", "this", "that", "after", "before", "over",
+}
+
+
+def _looks_non_english(text: str) -> bool:
+    """英語ストップワードを含まないラテン文字テキストを非英語（伊・西・仏語等）と推定する"""
+    words = re.findall(r"[a-zA-Z']+", text.lower())
+    if len(words) < 5:
+        return False
+    return not any(w in _EN_STOPWORDS for w in words)
+
+
+def _translate_to_english_query(topic: str, context: str = "default") -> str:
+    """非英語トピックをTavily検索用の英語クエリに変換する（Claude API使用）"""
     _ssl = os.environ.get("SSL_VERIFY", "true").lower() != "false"
+    if context == "longtail":
+        instruction = (
+            f"Convert this football reference/list topic (it may be in Japanese) to an "
+            f"English search query optimized for finding Wikipedia or Transfermarkt reference "
+            f"pages rather than news articles (max 12 words, no punctuation). Include specific "
+            f"terms like 'squad', 'kader', 'all-time', 'list', 'records', 'history' where "
+            f"relevant so the query matches list/reference pages:\n{topic}"
+        )
+    else:
+        instruction = (
+            f"Convert this football-related topic (it may be in Japanese, Italian, "
+            f"Spanish, or another language) to a concise English search query "
+            f"(player/club names in English, max 10 words, no punctuation):\n{topic}"
+        )
     try:
         import httpx
         http_client = httpx.Client(verify=False) if not _ssl else None
@@ -113,14 +142,11 @@ def _translate_to_english_query(topic: str) -> str:
             max_tokens=100,
             messages=[{
                 "role": "user",
-                "content": (
-                    f"Convert this Japanese football topic to a concise English search query "
-                    f"(player names in English, max 10 words, no punctuation):\n{topic}"
-                ),
+                "content": instruction,
             }],
         )
         query = resp.content[0].text.strip()
-        print(f"[researcher] 日本語トピック翻訳: '{topic[:40]}' → '{query}'")
+        print(f"[researcher] 非英語トピック翻訳: '{topic[:40]}' → '{query}'")
         return query
     except Exception as e:
         print(f"[researcher] 翻訳失敗（原文使用）: {e}")
@@ -130,6 +156,8 @@ def _translate_to_english_query(topic: str) -> str:
 def _build_query(topic: str, context: str = "default") -> str:
     # Nitter ツイートトピックは先頭の "[アカウント名] " を除去してクエリに使う
     topic = re.sub(r"^\[.*?\]\s*", "", topic).strip()
+    # @メンション記号を除去（翻訳失敗時の保険。"@RealBetis" → "RealBetis"）
+    topic = re.sub(r"@(\w+)", r"\1", topic).strip()
     if len(topic.split()) >= 5:
         return topic
     if context in ("europe", "transfers"):
@@ -162,7 +190,12 @@ def _run_search(
 
 def search_articles(query: str, config_path: str = "config.yaml", context: str = "default") -> list[SearchResult]:
     config = load_config(config_path)
-    whitelist = config["sources"]["whitelist"]
+    # ロングテール（歴代記録・一覧等）はニュースサイトに情報が無いため
+    # Wikipedia・公式サイト等の参照系ソースを使う
+    if context == "longtail" and config["sources"].get("longtail_whitelist"):
+        whitelist = config["sources"]["longtail_whitelist"]
+    else:
+        whitelist = config["sources"]["whitelist"]
     max_results = config["search"]["max_results"]
 
     include_domains = []
@@ -175,8 +208,8 @@ def search_articles(query: str, config_path: str = "config.yaml", context: str =
     if not _SSL_VERIFY:
         client.session.verify = False  # type: ignore[attr-defined]
 
-    # 日本語トピックは英語クエリに変換してから検索
-    search_base = _translate_to_english_query(query) if _is_japanese(query) else query
+    # 日本語・非英語（伊語ツイート等）トピックは英語クエリに変換してから検索
+    search_base = _translate_to_english_query(query, context=context) if (_is_japanese(query) or _looks_non_english(query)) else query
     search_query = _build_query(search_base, context)
     # ロングテール（歴代記録・背番号一覧等）は直近ニュースではないため期間制限を外す
     days = None if context == "longtail" else 14

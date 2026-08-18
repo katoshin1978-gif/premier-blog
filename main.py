@@ -276,6 +276,7 @@ def mark_processed(conn: sqlite3.Connection, topic: Topic, post_id: int, post_ur
 def _find_valid_topic(
     candidate_topics: list[Topic],
     context: str = "default",
+    used_urls: set[str] | None = None,
 ) -> tuple[Topic | None, list, list]:
     """候補から記事収集に成功した最初のトピックを返す"""
     for candidate in candidate_topics:
@@ -285,6 +286,15 @@ def _find_valid_topic(
         if len(_results) < MIN_ARTICLES:
             print(f"[main] 検索結果不足 ({len(_results)} 件)、次のトピックへ")
             continue
+
+        # 参照ソースが既採用トピックと大きく重複する場合、同一試合/出来事を
+        # 異なる切り口で再記事化しているだけの可能性が高いためスキップする
+        if used_urls:
+            candidate_urls = {r.url for r in _results}
+            overlap = candidate_urls & used_urls
+            if len(overlap) >= 2:
+                print(f"[main] 既出トピックとソース重複 ({len(overlap)} 件)、同一の出来事の可能性が高いためスキップ")
+                continue
 
         _articles = fetch_articles([r.url for r in _results])
 
@@ -316,9 +326,10 @@ def _post_article(
     conn: sqlite3.Connection,
     cfg: dict,
     force_category: str | None = None,
+    context: str = "default",
 ) -> bool:
     """1記事を生成・投稿する。成功したら True を返す"""
-    generated = generate_article(topic.title, articles, search_results, CONFIG_PATH)
+    generated = generate_article(topic.title, articles, search_results, CONFIG_PATH, context=context)
 
     if generated.content.strip() == "SKIP_OLD_NEWS":
         print(f"[main] 古いニュースのためスキップ: {topic.title}")
@@ -443,6 +454,7 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
         candidate_topics = sorted(unprocessed, key=lambda t: t.score, reverse=True)
 
     used_hashes: set[str] = set()
+    used_urls: set[str] = set()
     success_count = 0
 
     for i in range(count):
@@ -457,13 +469,14 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             print(f"[main] 残りトピックなし。{success_count}/{count} 記事生成済み")
             break
 
-        topic, search_results, articles = _find_valid_topic(remaining)
+        topic, search_results, articles = _find_valid_topic(remaining, used_urls=used_urls)
 
         if topic is None:
             print(f"[main] 全トピックで記事収集に失敗。{success_count}/{count} 記事生成済み")
             break
 
         used_hashes.add(topic_hash(topic))
+        used_urls.update(r.url for r in search_results)
         print(f"[main] 採用トピック: {topic.title}")
 
         try:
@@ -493,11 +506,12 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             if not remaining:
                 print(f"[main] 移籍トピックなし。{transfer_success}/{count_transfers} 記事生成済み")
                 break
-            topic, search_results, articles = _find_valid_topic(remaining, context="transfers")
+            topic, search_results, articles = _find_valid_topic(remaining, context="transfers", used_urls=used_urls)
             if topic is None:
                 print(f"[main] 移籍: 全トピックで記事収集失敗")
                 break
             used_hashes.add(topic_hash(topic))
+            used_urls.update(r.url for r in search_results)
 
             # 同日に同じ選手の移籍記事がすでにあればスキップ
             player_key = extract_player_name(topic.title)
@@ -530,11 +544,12 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             if not remaining:
                 print(f"[main] 欧州トピックなし。{europe_success}/{count_europe} 記事生成済み")
                 break
-            topic, search_results, articles = _find_valid_topic(remaining, context="europe")
+            topic, search_results, articles = _find_valid_topic(remaining, context="europe", used_urls=used_urls)
             if topic is None:
                 print(f"[main] 欧州: 全トピックで記事収集失敗")
                 break
             used_hashes.add(topic_hash(topic))
+            used_urls.update(r.url for r in search_results)
 
             # パイプライン横断で同日同選手スキップ
             player_key = extract_player_name(topic.title)
@@ -616,7 +631,7 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
 
             print(f"[main] ロングテール採用クエリ: {topic.title} (カテゴリ: {topic.category})")
             try:
-                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category=topic.category)
+                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category=topic.category, context="longtail")
                 if ok:
                     longtail_success += 1
             except Exception as e:

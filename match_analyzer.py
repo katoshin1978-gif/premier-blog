@@ -295,7 +295,9 @@ def generate_analysis_article(
         f"{match_facts}\n\n"
         f"--- ソース情報 ---\n{source_ctx}\n--- ここまで ---\n\n"
         f"試合データとソースを踏まえ、指定フォーマットで日本語の分析記事を生成してください。\n"
-        f"タイトルは「{home} {score_str} {away} 戦術分析」の形式を含めること。"
+        f"タイトルには{home}と{away}のチーム名を含め、「戦術分析」という語で締めること。"
+        f"スコアの具体的な数字（{score_str}等）はタイトルに書かない。結果を明かすとクリックされずに満足されCTRが下がるため、"
+        f"「まさかの大敗」「衝撃の逆転劇」「圧巻の快勝」など結果の重大性・意外性を示す語で、クリックしないと結果が分からない見出しにする。"
     )
 
     _ssl_verify = os.environ.get("SSL_VERIFY", "true").lower() != "false"
@@ -317,7 +319,9 @@ def generate_analysis_article(
     title = _extract_title(content)
 
     if title is None or len(content.strip()) < 300:
+        preview = content.strip().replace("\n", " ")[:200]
         print(f"[match_analyzer] 分析記事生成失敗と判定（フォーマット不正/内容不足）→ スキップ")
+        print(f"[match_analyzer] AI応答冒頭: {preview}")
         return None
 
     print(f"[match_analyzer] 分析記事生成完了: {title}")
@@ -452,7 +456,9 @@ def generate_preview_article(
     title = _extract_title(content)
 
     if title is None or len(content.strip()) < 300:
+        preview = content.strip().replace("\n", " ")[:200]
         print(f"[match_analyzer] プレビュー記事生成失敗と判定（フォーマット不正/内容不足）→ スキップ")
+        print(f"[match_analyzer] AI応答冒頭: {preview}")
         return None
 
     print(f"[match_analyzer] プレビュー記事生成完了: {title}")

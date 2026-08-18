@@ -4,6 +4,7 @@ Anthropic Claude API (claude-opus-4-7) で複数記事を統合し日本語記�
 """
 
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -256,11 +257,57 @@ SYSTEM_PROMPT = """あなたはプレミアリーグ専門の日本語スポー�
 ```"""
 
 
+LONGTAIL_SYSTEM_PROMPT = """あなたはプレミアリーグ・欧州サッカー専門の日本語スポーツライターです。
+「歴代記録」「一覧」「ランキング」など、時事ニュースではなく普遍的に検索されるリファレンス的な
+トピックについて、読者が知りたい情報を一目で把握できる記事を書きます。
+
+【絶対に守るルール】
+- 提供されたソースの情報のみを使用する（知識の補完は禁止）
+- ソースに明示されていない具体的な数字・年・選手名を創作してはならない。確認できない項目は
+  一覧から省くか「情報なし」と明記する
+- 記事中でのソース引用は1ソースあたり最大100語（英語換算）まで。残りは自分の言葉で要約・言い換えする
+- 著作権を尊重し、原文の長文コピーは行わない
+- 記事末尾の「情報源」セクションで全ソースをリスト化する
+- ソースの量・質・状態についてのメタコメントを記事本文に書かない
+
+【記事の書き方（最重要）】
+- 本文に必ず箇条書き（- または番号付き）または表形式の一覧を含めること。一覧を欠いた
+  読み物記事にすることは禁止。トピックが「一覧」「歴代」「ランキング」等であれば、
+  その対象を実際に列挙する
+- 各項目には1〜2文の解説・エピソードを添える（単なる名前や数字の羅列にしない）
+- 情報は執筆時点のものである旨を冒頭か末尾に一言添える（背番号・順位等は変動するため）
+
+【文字数の目標】
+- 記事全体：1500〜3000文字
+
+""" + PLAYER_NAMES_GUIDE + """
+【出力フォーマット（厳守）】
+```
+# {具体的な日本語タイトル}
+
+## はじめに
+{このテーマが読者にとってなぜ有用か、2〜3行で}
+
+## {一覧本体の見出し}
+- {項目1}：{1〜2文の解説}
+- {項目2}：{1〜2文の解説}
+（実際の対象をすべて列挙する）
+
+## 編集部の見解
+{このデータから読み取れる傾向・トリビア的な考察。200文字以上}
+
+---
+**情報源**
+- [{記事タイトル}]({URL}) - {サイト名}
+```"""
+
+
 def generate_article(
     topic: str,
     articles: list[FetchedArticle],
     search_results: list[SearchResult],
     config_path: str = "config.yaml",
+    context: str = "default",
 ) -> GeneratedArticle:
     config = load_config(config_path)
     max_quote_words = config["search"].get("max_quote_words", MAX_QUOTE_WORDS)
@@ -288,37 +335,59 @@ def generate_article(
             + "\n\n"
         )
 
-    user_message = (
-        f"以下のトピックについて、提供されたソースを使って日本語記事を生成してください。\n\n"
-        f"【重要】今日の日付: {today_str}\n"
-        f"ソース記事に含まれる日付を確認し、主要な情報が30日以上前のものであれば記事を書かず、"
-        f"代わりに「SKIP_OLD_NEWS」とだけ出力してください。\n\n"
-        f"トピック: {topic}\n\n"
-        f"{club_facts_text}"
-        f"--- ソース情報 ---\n{source_context}\n--- ここまで ---\n\n"
-        f"上記のソースを参照しながら、指定されたフォーマットで日本語記事を生成してください。\n"
-        f"【厳守】ソースに記載のない事実（選手の所属国・W杯出場可否・スタッツ・移籍金額など）を推測・補完して書くことは禁止。確認できない情報は省略すること。\n\n"
-        f"【タイトルのSEO最適化】\n"
-        f"# の見出しタイトルは以下のルールで作成すること：\n"
-        f"- 60文字以内\n"
-        f"- 選手名・クラブ名・具体的な数字を必ず含む（例：「ラッシュフォード、マドリード移籍金8000万ポンドで合意」）\n"
-        f"- 「〜について」「〜に関して」「〜の件」などの曖昧表現は使わない\n"
-        f"- 移籍記事は確定済み（official/confirmed/here we go等）の場合のみ「獲得」「移籍合意」「完全移籍」を使う。未確定（噂・交渉段階）なら「浮上」「関心」「争奪戦」など確度が伝わる語を使う。試合なら「〇-〇」など結果を含める\n"
-        f"- 日本語の検索需要を意識する：「移籍」「年俸」「最新情報」「怪我」「スタメン」など\n\n"
-        f"【移籍記事の注意】\n"
-        f"移籍情報は{today_str[:4]}年夏の移籍ウィンドウの情報のみを取り上げること。"
-        f"前シーズン（2024-25シーズン以前）に完了した移籍は古い情報なので記事に含めない。\n\n"
-        f"【情報源セクションの直後に以下を必ず追記すること】\n"
-        f"<!-- SEO\n"
-        f"seo_desc: ここに記事の要点と読む価値が伝わる120文字以内の説明文\n"
-        f"-->"
-    )
+    if context == "longtail":
+        user_message = (
+            f"以下のテーマについて、提供されたソースを使って日本語のリファレンス記事を生成してください。\n\n"
+            f"テーマ: {topic}\n\n"
+            f"{club_facts_text}"
+            f"--- ソース情報 ---\n{source_context}\n--- ここまで ---\n\n"
+            f"上記のソースを参照しながら、指定されたフォーマットで日本語記事を生成してください。\n"
+            f"【厳守】本文に必ず箇条書きまたは表形式の一覧を含めること。テーマが指す対象を実際に列挙し、"
+            f"各項目に1〜2文の解説を加える。ソースに記載のない事実・数字を推測・補完して書くことは禁止。"
+            f"確認できない項目は一覧から省くこと。\n\n"
+            f"【タイトルのルール】\n"
+            f"- 60文字以内、テーマの主題（クラブ名・対象）を含む\n"
+            f"- 「〜について」「〜に関して」などの曖昧表現は使わない\n\n"
+            f"【情報源セクションの直後に以下を必ず追記すること】\n"
+            f"<!-- SEO\n"
+            f"seo_desc: ここに記事の要点と読む価値が伝わる120文字以内の説明文\n"
+            f"-->"
+        )
+    else:
+        user_message = (
+            f"以下のトピックについて、提供されたソースを使って日本語記事を生成してください。\n\n"
+            f"【重要】今日の日付: {today_str}\n"
+            f"ソース記事に含まれる日付を確認し、主要な情報が30日以上前のものであれば記事を書かず、"
+            f"代わりに「SKIP_OLD_NEWS」とだけ出力してください。\n\n"
+            f"トピック: {topic}\n\n"
+            f"{club_facts_text}"
+            f"--- ソース情報 ---\n{source_context}\n--- ここまで ---\n\n"
+            f"上記のソースを参照しながら、指定されたフォーマットで日本語記事を生成してください。\n"
+            f"【厳守】ソースに記載のない事実（選手の所属国・W杯出場可否・スタッツ・移籍金額など）を推測・補完して書くことは禁止。確認できない情報は省略すること。\n\n"
+            f"【タイトルのSEO最適化】\n"
+            f"# の見出しタイトルは以下のルールで作成すること：\n"
+            f"- 60文字以内\n"
+            f"- 選手名・クラブ名・具体的な数字を必ず含む（例：「ラッシュフォード、マドリード移籍金8000万ポンドで合意」）\n"
+            f"- 「〜について」「〜に関して」「〜の件」などの曖昧表現は使わない\n"
+            f"- 移籍記事は確定済み（official/confirmed/here we go等）の場合のみ「獲得」「移籍合意」「完全移籍」を使う。未確定（噂・交渉段階）なら「浮上」「関心」「争奪戦」など確度が伝わる語を使う\n"
+            f"- 試合結果記事のタイトルにスコアの具体的な数字（〇-〇）を書かない。結果を明かすと検索結果でクリックせず満足されてしまいCTRが下がるため、「まさかの大敗」「衝撃の逆転劇」「圧巻の快勝」など結果の重大性・意外性を示す語を使い、クリックしないと結果が分からない見出しにする\n"
+            f"- 日本語の検索需要を意識する：「移籍」「年俸」「最新情報」「怪我」「スタメン」など\n\n"
+            f"【移籍記事の注意】\n"
+            f"移籍情報は{today_str[:4]}年夏の移籍ウィンドウの情報のみを取り上げること。"
+            f"前シーズン（2024-25シーズン以前）に完了した移籍は古い情報なので記事に含めない。\n\n"
+            f"【情報源セクションの直後に以下を必ず追記すること】\n"
+            f"<!-- SEO\n"
+            f"seo_desc: ここに記事の要点と読む価値が伝わる120文字以内の説明文\n"
+            f"-->"
+        )
 
     http_client = httpx.Client(verify=_SSL_VERIFY) if not _SSL_VERIFY else None
     client = anthropic.Anthropic(
         api_key=os.environ["ANTHROPIC_API_KEY"],
         http_client=http_client,
     )
+
+    system_prompt = LONGTAIL_SYSTEM_PROMPT if context == "longtail" else SYSTEM_PROMPT
 
     # プロンプトキャッシュを活用（system promptをキャッシュ）
     response = client.messages.create(
@@ -327,7 +396,7 @@ def generate_article(
         system=[
             {
                 "type": "text",
-                "text": SYSTEM_PROMPT,
+                "text": system_prompt,
                 "cache_control": {"type": "ephemeral"},
             }
         ],
@@ -343,8 +412,18 @@ def generate_article(
     # タイトル行が見つからない、または本文が極端に短い場合はフォーマット崩壊＝
     # ソース不足でClaudeが定型の謝罪文を返したケース。記事として投稿する価値がないためスキップ。
     if title is None or len(content.strip()) < 300:
+        preview = content.strip().replace("\n", " ")[:200]
         print(f"[synthesizer] 記事生成失敗と判定（フォーマット不正/内容不足）→ スキップ: topic='{topic}'")
+        print(f"[synthesizer] AI応答冒頭: {preview}")
         return GeneratedArticle(title="", content="SKIP_LOW_QUALITY", sources=search_results)
+
+    # ロングテール記事は一覧・箇条書きが本体のため、それが無ければ通常記事に
+    # すり替わってしまっている（背番号一覧のはずが速報記事になる等）ので破棄する
+    if context == "longtail":
+        list_marker_count = content.count("\n- ") + len(re.findall(r"\n\d+\.\s", content))
+        if list_marker_count < 3:
+            print(f"[synthesizer] ロングテール記事に一覧構造が無いためスキップ: topic='{topic}' (list_markers={list_marker_count})")
+            return GeneratedArticle(title="", content="SKIP_LOW_QUALITY", sources=search_results)
 
     print(f"[synthesizer] 記事生成完了: {title}")
     print(f"[synthesizer] 使用トークン: input={response.usage.input_tokens}, output={response.usage.output_tokens}")
@@ -362,8 +441,14 @@ def _normalize_player_names(text: str) -> str:
             data = yaml.safe_load(f)
         corrections = data.get("corrections", {})
         for wrong, correct in corrections.items():
-            if wrong in text:
+            # wrong が correct の部分文字列になっているケース（例: "サラー" → "モハメド・サラー"）で
+            # 既に正しい表記の箇所まで再置換され「モハメド・モハメド・サラー」になるのを防ぐため、
+            # correct 箇所を退避してから置換する
+            if wrong in text and wrong != correct:
+                placeholder = f"\x00{abs(hash(correct)) % 1_000_000}\x00"
+                text = text.replace(correct, placeholder)
                 text = text.replace(wrong, correct)
+                text = text.replace(placeholder, correct)
                 print(f"[synthesizer] 名前修正: {wrong} → {correct}")
     except Exception:
         pass

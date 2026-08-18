@@ -8,3 +8,4 @@ requests>=2.31.0
 feedparser>=6.0.0
 replicate>=0.34.0
 Pillow>=10.0.0
+playwright>=1.62.0

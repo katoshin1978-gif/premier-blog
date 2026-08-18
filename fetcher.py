@@ -31,6 +31,59 @@ class FetchedArticle:
         self.word_count = len(self.content.split())
 
 
+_BLOCK_MARKERS = [
+    "you have been blocked",
+    "cloudflare ray id",
+    "enable javascript and cookies",
+    "please enable cookies",
+    "checking your browser",
+]
+
+
+def _looks_blocked(text: str) -> bool:
+    """Cloudflare等のボット対策ブロックページを検出する"""
+    lower = text.lower()
+    return any(m in lower for m in _BLOCK_MARKERS)
+
+
+def _fetch_with_browser(url: str) -> FetchedArticle | None:
+    """Jina Readerがボット対策でブロックされた場合のフォールバック。
+    ヘッドレスブラウザで直接アクセスしてJSレンダリング後の本文を取得する。
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(f"[fetcher] playwright未インストールのためブラウザ取得をスキップ: {url}")
+        return None
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                ignore_https_errors=True,
+            )
+            page = context.new_page()
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(4000)
+            title = page.title()
+            text = page.inner_text("body")
+            browser.close()
+
+        if len(text.strip()) < 100 or _looks_blocked(text):
+            print(f"[fetcher] ブラウザ取得もブロック/内容不足: {url}")
+            return None
+
+        article = FetchedArticle(url=url, title=title, content=text.strip())
+        print(f"[fetcher] ブラウザ経由で取得完了 ({article.word_count} words): {url}")
+        return article
+    except Exception as e:
+        print(f"[fetcher] ブラウザ取得失敗: {url} ({e})")
+        return None
+
+
 def fetch_article(url: str) -> FetchedArticle | None:
     jina_url = JINA_BASE + url
     headers = {
@@ -66,6 +119,10 @@ def fetch_article(url: str) -> FetchedArticle | None:
             if len(content) < 100:
                 print(f"[fetcher] コンテンツが短すぎます: {url}")
                 return None
+
+            if _looks_blocked(content):
+                print(f"[fetcher] ボット対策ブロックを検出、ブラウザ取得にフォールバック: {url}")
+                return _fetch_with_browser(url)
 
             article = FetchedArticle(url=url, title=title, content=content)
             print(f"[fetcher] 取得完了 ({article.word_count} words): {url}")

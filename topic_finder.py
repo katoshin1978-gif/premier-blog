@@ -290,6 +290,15 @@ def get_nitter_topics(
                     # xcancel 等のホワイトリスト拒否メッセージは除外
                     if "not yet whitelist" in text or "rss [at]" in text.lower():
                         continue
+                    # URL・メンションを除いた実質文字数が乏しい断片ツイート（引用RTの
+                    # アカウント名のみ、URLで途切れた文等）は検索クエリにしても無関係な
+                    # 記事しかヒットせず記事生成に失敗するため除外する
+                    substance = re.sub(r"https?://\S+", "", text)
+                    substance = re.sub(r"\S+\.(com|it|net|org|co)\S*", "", substance)
+                    substance = re.sub(r"@\w+", "", substance)
+                    substance = re.sub(r"[.\s…:,]+", "", substance)
+                    if len(substance) < 25:
+                        continue
                     # topic_title として使われる先頭部分でフィルタリング（全文一致だと
                     # 後半の別ツイート内容で通過し、先頭の無関係テキストが検索クエリになる）
                     if not content_filter(text[:200]):
