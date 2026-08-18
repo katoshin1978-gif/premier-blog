@@ -25,6 +25,7 @@ sources:
   - lequipe.fr/Football
   - mundodeportivo.com/futbol
   - sport.es/es/futbol
+  - manchestereveningnews.co.uk/sport/football
   longtail_whitelist:
   - ja.wikipedia.org
   - en.wikipedia.org
@@ -48,6 +49,7 @@ topic:
   - https://www.football-italia.net/feed
   - https://metro.co.uk/sport/football/feed/
   - https://www.theguardian.com/profile/fabrizio-romano/rss
+  - https://www.manchestereveningnews.co.uk/all-about/manchester-united-fc/?service=rss
   nitter_accounts:
   - FabrizioRomano
   - centredevils
