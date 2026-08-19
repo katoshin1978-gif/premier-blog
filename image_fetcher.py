@@ -10,6 +10,7 @@ import re
 import sqlite3
 import requests
 import yaml
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,6 +23,7 @@ PEXELS_API = "https://api.pexels.com/v1/search"
 THESPORTSDB_API = "https://www.thesportsdb.com/api/v1/json"
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB 超はWPアップロードでタイムアウトしやすい
 DB_PATH = "processed.db"
+IMAGE_REUSE_AFTER_DAYS = 3  # この日数を過ぎたら同じ画像を再度使ってよい
 
 # 選手写真でサッカーと無関係な場面（訪問・授賞式・私服等）をブロックするキーワード
 _BLOCKED_PLAYER_TITLE_KEYWORDS = {
@@ -46,6 +48,14 @@ _BLOCKED_PLAYER_TITLE_KEYWORDS = {
     # 具体的なフレーズのみを対象にする
     "red carpet", "gala", "gala ball", "wedding", "party", "concert",
     "book", "signing", "autobiography",
+}
+
+# Pexels等のテキスト全文検索は「football」をラグビー・アメフト等にも緩く一致
+# させるため、非サッカー競技と分かる語を含む候補を除外する（altテキスト照合用）
+_NON_SOCCER_SPORT_KEYWORDS = {
+    "rugby", "american football", "gridiron", "nfl", "afl",
+    "cricket", "baseball", "basketball", "hockey", "ice hockey",
+    "volleyball", "handball", "lacrosse", "netball", "gaelic football",
 }
 
 # 汎用すぎてどの記事にも使われてしまうファイルタイトルのキーワード
@@ -200,7 +210,8 @@ _EXCLUDE_WORDS = {
 # -----------------------------------------------------------------------
 
 # 同一実行内の重複をメモリで即時排除（DBコミットタイミングに依存しない）
-_used_this_run: set[str] = set()
+# filename -> 最終使用日時（IMAGE_REUSE_AFTER_DAYS 以内なら使用済み扱い、過ぎたら再利用可）
+_used_this_run: dict[str, datetime] = {}
 
 
 def _init_image_db() -> sqlite3.Connection:
@@ -212,9 +223,12 @@ def _init_image_db() -> sqlite3.Connection:
         )
     """)
     conn.commit()
-    # 起動時にDB済みのファイル名をメモリに読み込む
-    for (fn,) in conn.execute("SELECT filename FROM used_images"):
-        _used_this_run.add(fn)
+    # 起動時にDB済みのファイル名と使用日時をメモリに読み込む
+    for fn, used_at in conn.execute("SELECT filename, used_at FROM used_images"):
+        try:
+            _used_this_run[fn] = datetime.fromisoformat(used_at)
+        except ValueError:
+            continue
     return conn
 
 
@@ -230,17 +244,21 @@ def _get_db() -> sqlite3.Connection:
 
 
 def _is_image_used(filename: str) -> bool:
-    """メモリキャッシュで即時判定（DB不要）"""
-    return filename in _used_this_run
+    """メモリキャッシュで即時判定（DB不要）。直近 IMAGE_REUSE_AFTER_DAYS 日以内の使用のみ「使用済み」扱い"""
+    used_at = _used_this_run.get(filename)
+    if used_at is None:
+        return False
+    return datetime.utcnow() - used_at < timedelta(days=IMAGE_REUSE_AFTER_DAYS)
 
 
 def _mark_image_used(filename: str) -> None:
-    from datetime import datetime
-    _used_this_run.add(filename)
+    now = datetime.utcnow()
+    _used_this_run[filename] = now
     conn = _get_db()
     conn.execute(
-        "INSERT OR IGNORE INTO used_images (filename, used_at) VALUES (?, ?)",
-        (filename, datetime.utcnow().isoformat())
+        "INSERT INTO used_images (filename, used_at) VALUES (?, ?) "
+        "ON CONFLICT(filename) DO UPDATE SET used_at = excluded.used_at",
+        (filename, now.isoformat())
     )
     conn.commit()
 
@@ -607,6 +625,10 @@ def _search_pexels(
         random.shuffle(photos)
         _get_db()  # 初回呼び出しでDBとメモリキャッシュを初期化
         for photo in photos:
+            alt = (photo.get("alt") or "").lower()
+            if any(kw in alt for kw in _NON_SOCCER_SPORT_KEYWORDS):
+                print(f"[image_fetcher] Pexels スキップ（非サッカー競技の可能性）: {photo.get('alt')}")
+                continue
             filename = f"pexels_{photo['id']}.jpg"
             if _is_image_used(filename):
                 print(f"[image_fetcher] Pexels スキップ（使用済み）: {filename}")

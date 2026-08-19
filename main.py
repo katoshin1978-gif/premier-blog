@@ -350,11 +350,18 @@ def _post_article(
 
     # アイキャッチ画像取得・アップロード
     # 英語トピック + ソース記事タイトルを結合して選手名抽出精度を向上
+    # ここで使うのは「検索でヒットしただけの記事」ではなく「実際に生成記事内で
+    # 引用された記事」のみに限定する。全ヒット記事を混ぜると、記事本文と無関係な
+    # 選手名（Man United関連の補完検索で拾った別記事の選手等）が抽出され、
+    # 本文の主題とかけ離れたアイキャッチが選ばれることがあるため。
     featured_media_id = None
     img_topic = topic.title
     if articles:
-        src_titles = " ".join(a.title for a in articles if a.title)
-        img_topic = f"{img_topic} {src_titles}"
+        cited_titles = " ".join(
+            a.title for a in articles if a.title and a.url and a.url in generated.content
+        )
+        if cited_titles:
+            img_topic = f"{img_topic} {cited_titles}"
     img_result = fetch_image(img_topic, primary_topic=topic.title)
     if img_result:
         img_bytes, img_filename, img_attribution = img_result
