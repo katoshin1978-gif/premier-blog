@@ -350,7 +350,10 @@ def generate_article(
             f"確認できない項目は一覧から省くこと。\n\n"
             f"【タイトルのルール】\n"
             f"- 60文字以内、テーマの主題（クラブ名・対象）を含む\n"
-            f"- 「〜について」「〜に関して」などの曖昧表現は使わない\n\n"
+            f"- 「〜について」「〜に関して」などの曖昧表現は使わない\n"
+            f"- 一覧記事でも「〜一覧」だけで終わらせず、「最多〇〇は誰？」「歴代最高額は？」のように"
+            f"記事を開かないと答えが分からない具体的な問いかけ・数字のフックを添える。"
+            f"タイトルを読んだだけで内容の要点が全て分かってしまう作りだとクリックされない\n\n"
             f"【情報源セクションの直後に以下を必ず追記すること】\n"
             f"<!-- SEO\n"
             f"seo_desc: ここに記事の要点と読む価値が伝わる120文字以内の説明文\n"
@@ -374,6 +377,9 @@ def generate_article(
             f"- 「〜について」「〜に関して」「〜の件」などの曖昧表現は使わない\n"
             f"- 移籍記事は確定済み（official/confirmed/here we go等）の場合のみ「獲得」「移籍合意」「完全移籍」を使う。未確定（噂・交渉段階）なら「浮上」「関心」「争奪戦」など確度が伝わる語を使う\n"
             f"- 試合結果記事のタイトルにスコアの具体的な数字（〇-〇）を書かない。結果を明かすと検索結果でクリックせず満足されてしまいCTRが下がるため、「まさかの大敗」「衝撃の逆転劇」「圧巻の快勝」など結果の重大性・意外性を示す語を使い、クリックしないと結果が分からない見出しにする\n"
+            f"- 発言・コメントを扱う記事でも、本人の発言をそのまま「」で引用して結論部分（決定事項・最終的な答え）を"
+            f"タイトルに丸ごと載せない。結論の中身が見出しだけで分かってしまうとクリックする理由がなくなる。"
+            f"誰が何について語ったかまでに留め、内容の核心は本文を読まないと分からない書き方にする\n"
             f"- 日本語の検索需要を意識する：「移籍」「年俸」「最新情報」「怪我」「スタメン」など\n\n"
             f"【移籍記事の注意】\n"
             f"移籍情報は{today_str[:4]}年夏の移籍ウィンドウの情報のみを取り上げること。"
@@ -427,6 +433,9 @@ def generate_article(
         if list_marker_count < 3:
             print(f"[synthesizer] ロングテール記事に一覧構造が無いためスキップ: topic='{topic}' (list_markers={list_marker_count})")
             return GeneratedArticle(title="", content="SKIP_LOW_QUALITY", sources=search_results)
+
+    for risk in check_title_ctr_risk(title):
+        print(f"[synthesizer] タイトル要確認（CTRリスク）: {risk} — title='{title}'")
 
     print(f"[synthesizer] 記事生成完了: {title}")
     print(f"[synthesizer] 使用トークン: input={response.usage.input_tokens}, output={response.usage.output_tokens}")
@@ -507,6 +516,23 @@ def _extract_title(markdown: str) -> str | None:
         if line.startswith("# "):
             return line.lstrip("# ").strip()
     return None
+
+
+_TITLE_SPOILER_QUOTE_MIN_LEN = 6
+
+
+def check_title_ctr_risk(title: str) -> list[str]:
+    """
+    タイトルがCTRを下げやすいパターン（結果・結論の先出し）を含んでいないか簡易チェックする。
+    プロンプト指示をAIがすり抜けた場合の保険であり、ブロックはせず警告を返すのみ。
+    呼び出し側でログに出し、下書きレビュー時に気付けるようにする。
+    """
+    warnings = []
+    if re.search(r"\d+\s*[-–—]\s*\d+", title):
+        warnings.append("スコアらしき数字（〇-〇）を含む可能性")
+    for quote in re.findall(rf"[「『]([^」』]{{{_TITLE_SPOILER_QUOTE_MIN_LEN},}})[」』]", title):
+        warnings.append(f"結論を先出しする引用の可能性: 「{quote}」")
+    return warnings
 
 
 if __name__ == "__main__":

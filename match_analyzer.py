@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from fetcher import fetch_articles
 from researcher import search_articles
-from synthesizer import GeneratedArticle, PLAYER_NAMES_GUIDE, _extract_seo_meta, _extract_title
+from synthesizer import GeneratedArticle, PLAYER_NAMES_GUIDE, _extract_seo_meta, _extract_title, check_title_ctr_risk
 
 load_dotenv()
 
@@ -298,6 +298,7 @@ def generate_analysis_article(
         f"タイトルには{home}と{away}のチーム名を含め、「戦術分析」という語で締めること。"
         f"スコアの具体的な数字（{score_str}等）はタイトルに書かない。結果を明かすとクリックされずに満足されCTRが下がるため、"
         f"「まさかの大敗」「衝撃の逆転劇」「圧巻の快勝」など結果の重大性・意外性を示す語で、クリックしないと結果が分からない見出しにする。"
+        f"監督・選手の発言をそのまま「」で引用して結論をタイトルに丸ごと載せるのも同じ理由で避ける。"
     )
 
     _ssl_verify = os.environ.get("SSL_VERIFY", "true").lower() != "false"
@@ -323,6 +324,9 @@ def generate_analysis_article(
         print(f"[match_analyzer] 分析記事生成失敗と判定（フォーマット不正/内容不足）→ スキップ")
         print(f"[match_analyzer] AI応答冒頭: {preview}")
         return None
+
+    for risk in check_title_ctr_risk(title):
+        print(f"[match_analyzer] タイトル要確認（CTRリスク）: {risk} — title='{title}'")
 
     print(f"[match_analyzer] 分析記事生成完了: {title}")
     print(f"[match_analyzer] 使用トークン: input={response.usage.input_tokens}, output={response.usage.output_tokens}")
