@@ -427,6 +427,10 @@ def _search_thesportsdb_player(
 
     _get_db()
     for player in players[:5]:
+        sport = (player.get("strSport") or "").lower()
+        if sport not in ("soccer", "football"):
+            print(f"[image_fetcher] TheSportsDB スキップ（非サッカー: {sport}）: {player.get('strPlayer')}")
+            continue
         for field in ("strThumb", "strCutout", "strRender"):
             url = player.get(field)
             if not url or not url.startswith("http"):
