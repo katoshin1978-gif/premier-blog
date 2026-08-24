@@ -518,7 +518,8 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
     sptv_id    = os.environ.get("SPTV_AFFILIATE_ID", "")
     dazn_url   = os.environ.get("DAZN_AFFILIATE_URL", "")
     agoda_id   = os.environ.get("AGODA_AFFILIATE_ID", "")
-    if not amazon_id and not rakuten_id and not sptv_id and not dazn_url and not agoda_id:
+    wowow_id   = os.environ.get("WOWOW_AFFILIATE_ID", "")
+    if not amazon_id and not rakuten_id and not sptv_id and not dazn_url and not agoda_id and not wowow_id:
         return ""
 
     # topic_titleが渡された場合はAIで動的キーワードを生成してrakutenカードに使う
@@ -608,6 +609,14 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
         cards.append(_aff_card_icon(
             agoda_url, "🏨", "agoda", "#EC1C43",
             "海外ホテル予約", "現地観戦の宿探しはこちら", "予約する"
+        ))
+
+    # WOWOWオンデマンド（全カテゴリ共通）
+    if wowow_id:
+        wowow_url = f"https://px.a8.net/svt/ejp?a8mat={wowow_id}"
+        cards.append(_aff_card_icon(
+            wowow_url, "📺", "WOWOWオンデマンド", "#7B2D8E",
+            "CL・EL含む海外サッカーを配信", "月額2,530円で見放題", "無料体験"
         ))
 
     if not cards:
