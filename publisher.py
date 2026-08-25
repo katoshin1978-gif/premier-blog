@@ -405,9 +405,9 @@ def _aff_card_icon(url: str, icon: str, brand: str, brand_color: str, title: str
         f'style="display:flex;align-items:center;gap:14px;padding:14px 16px;'
         f'border:1px solid #e0e0e0;border-radius:8px;background:#fff;'
         f'text-decoration:none;color:inherit;">'
-        f'<div style="flex-shrink:0;width:56px;height:56px;border-radius:8px;'
+        f'<div style="flex-shrink:0;width:96px;height:96px;border-radius:8px;'
         f'background:{brand_color};display:flex;align-items:center;justify-content:center;'
-        f'font-size:26px;line-height:1;">{icon}</div>'
+        f'font-size:44px;line-height:1;">{icon}</div>'
         f'<div style="flex:1;min-width:0;">'
         f'<div style="font-size:10px;font-weight:700;letter-spacing:.1em;color:{brand_color};margin-bottom:2px;">{brand}</div>'
         f'<div style="font-size:14px;font-weight:700;color:#111;margin-bottom:3px;'
@@ -428,9 +428,9 @@ def _aff_card_image(url: str, image_url: str, brand: str, brand_color: str,
         f'style="display:flex;align-items:center;gap:14px;padding:14px 16px;'
         f'border:1px solid #e0e0e0;border-radius:8px;background:#fff;'
         f'text-decoration:none;color:inherit;">'
-        f'<div style="flex-shrink:0;width:80px;height:60px;border-radius:6px;'
+        f'<div style="flex-shrink:0;width:140px;height:105px;border-radius:6px;'
         f'overflow:hidden;background:#f5f5f5;">'
-        f'<img src="{image_url}" width="80" height="60" '
+        f'<img src="{image_url}" width="140" height="105" '
         f'style="object-fit:cover;width:100%;height:100%;" alt="{title}" loading="lazy">'
         f'</div>'
         f'<div style="flex:1;min-width:0;">'
@@ -455,9 +455,9 @@ def _aff_card_product(url: str, image_url: str, brand: str, brand_color: str,
         f'style="display:flex;align-items:center;gap:14px;padding:14px 16px;'
         f'border:1px solid #e0e0e0;border-radius:8px;background:#fff;'
         f'text-decoration:none;color:inherit;">'
-        f'<div style="flex-shrink:0;width:72px;height:72px;border-radius:6px;'
+        f'<div style="flex-shrink:0;width:130px;height:130px;border-radius:6px;'
         f'overflow:hidden;background:#f5f5f5;display:flex;align-items:center;justify-content:center;">'
-        f'<img src="{image_url}" width="72" height="72" '
+        f'<img src="{image_url}" width="130" height="130" '
         f'style="object-fit:contain;width:100%;height:100%;" alt="{name_safe}" loading="lazy">'
         f'</div>'
         f'<div style="flex:1;min-width:0;">'
@@ -512,7 +512,8 @@ def _suggest_affiliate_keywords(title: str, content_hint: str = "") -> list[str]
         return []
 
 
-def _build_affiliate_html(category_id: int, topic_title: str | None = None, content_hint: str = "") -> str:
+def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, content_hint: str = "") -> list[str]:
+    """カテゴリ・記事内容に応じたアフィリエイトカードHTMLのリストを生成する"""
     amazon_id  = os.environ.get("AMAZON_ASSOCIATE_ID", "")
     rakuten_id = os.environ.get("RAKUTEN_AFFILIATE_ID", "")
     sptv_id    = os.environ.get("SPTV_AFFILIATE_ID", "")
@@ -619,18 +620,50 @@ def _build_affiliate_html(category_id: int, topic_title: str | None = None, cont
             "CL・EL含む海外サッカーを配信", "月額2,530円で見放題", "無料体験"
         ))
 
+    return cards
+
+
+def _wrap_affiliate_cards(cards: list[str], label: str = "PR · アフィリエイト広告") -> str:
+    """カードHTMLのリストを見出しラベル付きのブロックにまとめる"""
     if not cards:
         return ""
-
     cards_html = "\n".join(f'<div style="margin-bottom:10px;">{c}</div>' for c in cards)
     return (
         '<div class="affiliate-block" style="margin:2.5em 0;">'
         '<div style="font-size:11px;font-weight:700;letter-spacing:.12em;color:#999;'
         'text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;'
-        'border-bottom:1px solid #e8e8e8;">PR · アフィリエイト広告</div>'
+        f'border-bottom:1px solid #e8e8e8;">{label}</div>'
         f'{cards_html}'
         '</div>'
     )
+
+
+def _build_affiliate_html(category_id: int, topic_title: str | None = None, content_hint: str = "") -> str:
+    """全カードを末尾ブロックにまとめる（後方互換用。post_ferguson_column.py 等の単発スクリプトが使用）"""
+    return _wrap_affiliate_cards(_generate_affiliate_cards(category_id, topic_title, content_hint))
+
+
+def insert_mid_article_affiliate(html: str, card_html: str) -> str:
+    """記事本文の中間あたりの見出し（h2）直後にアフィリエイトカードを1枚差し込む。
+    最後まで読まれない記事でも露出させるための対策。"""
+    if not card_html:
+        return html
+    positions = []
+    pos = 0
+    while True:
+        pos = html.find("<h2", pos)
+        if pos == -1:
+            break
+        end = html.find("</h2>", pos)
+        if end == -1:
+            break
+        positions.append(end + len("</h2>"))
+        pos = end + len("</h2>")
+    if not positions:
+        return html
+    insert_at = positions[len(positions) // 2]
+    block = "\n" + _wrap_affiliate_cards([card_html]) + "\n"
+    return html[:insert_at] + block + html[insert_at:]
 
 
 def _build_related_html(posts: list[dict], data_room_url: str = "") -> str:
@@ -708,11 +741,15 @@ def publish_draft(
         title=data.get("title", {}).get("rendered", title),
     )
 
-    # 内部リンク（関連記事）＋アフィリエイトブロックを記事末尾に追加
+    # 記事中間へのアフィリエイトカード差し込み＋内部リンク（関連記事）＋アフィリエイトブロックを記事末尾に追加
     if primary_cat_id:
         # markdownの最初の段落（250字）をヒントとして渡す
         _plain = " ".join(content_markdown.split())[:250]
-        affiliate_html = _build_affiliate_html(primary_cat_id, title, _plain)
+        all_cards = _generate_affiliate_cards(primary_cat_id, title, _plain)
+        # 先頭の1枚は記事中間に差し込み、最後まで読まれなくても露出させる。残りは末尾に配置
+        mid_card, tail_cards = (all_cards[0], all_cards[1:]) if all_cards else (None, [])
+        body_html = insert_mid_article_affiliate(content_html, mid_card) if mid_card else content_html
+        affiliate_html = _wrap_affiliate_cards(tail_cards)
         related = _fetch_related_posts(
             base_url, ip_base_url, host_header, category_ids, result.post_id
         )
@@ -723,8 +760,8 @@ def publish_draft(
             suffix += "\n" + affiliate_html
         if related_html:
             suffix += "\n" + related_html
-        if suffix:
-            updated_content = content_html + suffix
+        updated_content = body_html + suffix
+        if updated_content != content_html:
             try:
                 requests.post(
                     f"{ip_base_url}/wp-json/wp/v2/posts/{result.post_id}",
@@ -734,8 +771,10 @@ def publish_draft(
                     verify=_SSL_VERIFY,
                 )
                 parts = []
+                if mid_card:
+                    parts.append("アフィリエイト(中間)")
                 if affiliate_html:
-                    parts.append("アフィリエイト")
+                    parts.append("アフィリエイト(末尾)")
                 if related_html:
                     parts.append(f"関連記事{len(related)}件")
                 print(f"[publisher] {' / '.join(parts)} 挿入完了")
