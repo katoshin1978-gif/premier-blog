@@ -79,6 +79,15 @@ topic_transfers:
   exclude_man_united: true
   limit: 10
   count: 2
+topic_sagas:
+  # 過去の移籍記事(processed_topics)から未決着の案件を自動検出し、
+  # stale_days以上動きがなければ能動的に続報を検索する。
+  # 決着（confirmed/official等）が確認され次第、自動で追跡終了する。
+  # watchlistは自動検出に含めたい選手を追加したい場合の任意の補助リスト（通常は空でよい）。
+  stale_days: 5
+  expiry_days: 21
+  max_tracked: 5
+  watchlist: []
 topic_europe:
   nitter_accounts:
   - FabrizioRomano

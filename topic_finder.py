@@ -109,6 +109,109 @@ _NITTER_INSTANCES = [
     "https://lightbrd.com",          # Turkey
 ]
 
+# 絵文字・国旗絵文字（ツイートの先頭に付くことが多く、選手名抽出の妨げになる）
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F1E6-\U0001F1FF"
+    "\U0001F300-\U0001FAFF"
+    "☀-➿"
+    "️"
+    "]+",
+    flags=re.UNICODE,
+)
+
+# タイトル先頭によく付く前置き（実際の主語＝選手名ではない）
+_TITLE_FILLER_PREFIX = re.compile(
+    r'^(papers?|exclusive|breaking|official|confirmed|reports?|sources?|update|live|done deal|mercato|transfer news)[:\-\s]+',
+    re.I,
+)
+
+# クラブ名・大会名など、大文字始まりでも選手名ではない語
+_NON_NAME_WORDS = {
+    "man", "city", "united", "real", "madrid", "barcelona", "barca", "psg",
+    "chelsea", "liverpool", "arsenal", "tottenham", "everton", "juventus",
+    "milan", "inter", "bayern", "dortmund", "world", "cup", "premier",
+    "league", "here", "we", "go", "el", "fc", "ac", "the", "and", "vs",
+    "manchester", "atletico", "sevilla", "porto", "roma", "napoli",
+    "leipzig", "paris", "saint", "germain",
+    # 国籍形容詞・年代カテゴリ等（選手名の前に付く記述語で、名前本体ではない）
+    "english", "scottish", "welsh", "irish", "french", "german", "italian",
+    "spanish", "portuguese", "dutch", "belgian", "brazilian", "argentine",
+    "argentinian", "danish", "swedish", "norwegian", "croatian", "serbian",
+    "moroccan", "ivorian", "senegalese", "ghanaian", "nigerian", "algerian",
+    "austrian", "swiss", "polish", "ukrainian", "mexican", "american",
+    "canadian", "australian", "japanese", "korean", "chinese", "turkish",
+    "greek", "colombian", "uruguayan", "chilean", "ecuadorian", "scotland",
+    "england", "wales", "ireland", "france", "germany", "italy", "spain",
+    "portugal", "excl",
+}
+
+# 選手個人の移籍状況ではなく評論家コメント・意見記事であることを示す語
+# （実際に動いている案件ではないため自動ウォッチリストの対象から除外する）
+_PUNDIT_COMMENTARY_KEYWORDS = [
+    "claims", "says", "warns", "slams", "blasts", "questions", "insists",
+    "hits out", "backs", "wants", "urges", "told", "believes", "fears",
+    "criticises", "criticizes", "reveals why", "explains why",
+]
+
+# Transfermarkt等の選手プロフィール・移籍履歴一覧などの参照ページ（ニュース記事ではない）
+_GENERIC_REFERENCE_TITLE_PATTERNS = [
+    re.compile(r'\bplayer profile\b', re.I),
+    re.compile(r'\btransfer histor(y|ies)\b', re.I),
+    re.compile(r'latest news,\s*transfer rumours', re.I),
+    re.compile(r'-\s*(all transfers|opponents|transfers?\s*\d{2}/\d{2})\b', re.I),
+    re.compile(r'\bdone deals?\b', re.I),
+    re.compile(r'\bwonderkids?\s+to\s+watch\b', re.I),
+    re.compile(r'-\s*latest news,\s*reaction', re.I),
+    re.compile(r'news,\s*stats,\s*rumours', re.I),
+]
+
+
+def _is_saga_news_article(title: str) -> bool:
+    return not any(p.search(title) for p in _GENERIC_REFERENCE_TITLE_PATTERNS)
+
+
+# 移籍案件の「決着」を示すキーワード（続報検索を打ち止めにする判定に使う）
+_SAGA_RESOLUTION_KEYWORDS = [
+    "confirmed", "official", "here we go", "complete", "completes", "completed",
+    "signs for", "signs a", "done deal", "medical done", "unveiled", "seals move",
+    "agrees to join", "announcement", "signs five", "signs four", "signs three",
+]
+
+
+def extract_player_name(title: str) -> str | None:
+    """
+    移籍関連タイトルから選手名を抽出する。
+    絵文字・「Papers:」等の前置き・クラブ名の連続を除外し、単独名（Rodri等）も許容する。
+    """
+    title = re.sub(r'^\[[^\]]+\]\s*', '', title)
+    title = _EMOJI_RE.sub('', title).strip()
+    title = _TITLE_FILLER_PREFIX.sub('', title)
+    words = title.split()
+
+    def _clean(word: str) -> str:
+        return re.sub(r'[^a-zA-Z\-]', '', word)
+
+    i = 0
+    while i < len(words) and i < 8:
+        run: list[str] = []
+        j = i
+        while j < len(words) and j < i + 5:
+            w = _clean(words[j])
+            if w and w[0].isupper() and len(w) > 1:
+                run.append(w)
+                j += 1
+            else:
+                break
+        if run:
+            lower_run = [w.lower() for w in run if w.lower() not in _NON_NAME_WORDS]
+            if lower_run:
+                return ' '.join(lower_run[:3])
+            i = j
+        else:
+            i += 1
+    return None
+
 
 def _is_article_url(url: str) -> bool:
     path = urlparse(url).path
@@ -553,6 +656,157 @@ def find_topics_longtail(config_path: str = "config.yaml") -> list[Topic]:
     return topics
 
 
+def _saga_last_mention(
+    player_name: str, db_path: str = "processed.db"
+) -> tuple[str | None, str | None]:
+    """processed_topics から選手名を含む直近のタイトルと日時を返す (title, created_at)"""
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT topic_title, created_at FROM processed_topics "
+            "WHERE topic_title LIKE ? ORDER BY created_at DESC",
+            (f"%{player_name}%",),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return None, None
+    return rows[0][0], rows[0][1]
+
+
+def _auto_watchlist(
+    db_path: str = "processed.db",
+    stale_days: float = 5,
+    expiry_days: float = 21,
+    max_tracked: int = 5,
+) -> list[str]:
+    """
+    過去に生成した移籍系記事（processed_topics）から、まだ決着キーワードが
+    出ていない選手を自動抽出する。stale_days〜expiry_daysの範囲（動きが止まって
+    いるが、まだ追う価値がある期間）にある案件だけを対象にし、直近で停滞した
+    ものから順に最大 max_tracked 件まで返す（Tavily API コスト抑制のため）。
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT topic_title, created_at FROM processed_topics ORDER BY created_at DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    latest: dict[str, tuple[str, str]] = {}
+    for title, created_at in rows:
+        if not _is_global_transfer(title):
+            continue
+        tl = title.lower()
+        if any(kw in tl for kw in _PUNDIT_COMMENTARY_KEYWORDS):
+            continue
+        player = extract_player_name(title)
+        if not player or player in latest:
+            continue
+        latest[player] = (title, created_at)
+
+    candidates = []
+    for player, (title, created_at) in latest.items():
+        if any(kw in title.lower() for kw in _SAGA_RESOLUTION_KEYWORDS):
+            continue
+        try:
+            age_days = (datetime.now() - datetime.fromisoformat(created_at)).total_seconds() / 86400
+        except Exception:
+            continue
+        if stale_days <= age_days <= expiry_days:
+            candidates.append((age_days, player))
+
+    candidates.sort(key=lambda x: x[0])
+    return [player for _, player in candidates[:max_tracked]]
+
+
+def get_saga_followup_topics(
+    config_path: str = "config.yaml", db_path: str = "processed.db"
+) -> list[Topic]:
+    """
+    未決着の大型移籍案件を自動検出し、一定日数（stale_days）以上動きがなければ
+    Tavilyで能動的に続報を検索する。案件は processed_topics から自動抽出するため
+    手動でのウォッチリスト登録は不要（config.yaml: topic_sagas.watchlist は
+    自動検出に含めたい選手を追加登録するための任意の補助手段）。
+    決着キーワード（confirmed/official等）が既に出ている案件、
+    expiry_days を超えて放置された案件は追跡対象から外れる。
+    見つかった続報はスコアを高めに付け、通常のRSS/Nitterトピックより優先させる。
+    """
+    from tavily import TavilyClient
+
+    config = load_config(config_path)
+    saga_cfg = config.get("topic_sagas", {})
+    manual_watchlist = saga_cfg.get("watchlist", [])
+    stale_days = saga_cfg.get("stale_days", 5)
+    expiry_days = saga_cfg.get("expiry_days", 21)
+    max_tracked = saga_cfg.get("max_tracked", 5)
+
+    auto_players = _auto_watchlist(db_path, stale_days, expiry_days, max_tracked)
+    watchlist = list(dict.fromkeys([*manual_watchlist, *auto_players]))
+    if not watchlist:
+        return []
+    print(f"[topic_finder] サーガ追跡対象: {watchlist}")
+
+    whitelist = config["sources"]["whitelist"]
+    include_domains = []
+    for entry in whitelist:
+        domain = entry.split("/")[0]
+        if domain not in include_domains:
+            include_domains.append(domain)
+
+    client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+    if not _SSL_VERIFY:
+        client.session.verify = False  # type: ignore[attr-defined]
+
+    topics: list[Topic] = []
+    for player in watchlist:
+        last_title, last_date = _saga_last_mention(player, db_path)
+        if last_title:
+            if any(kw in last_title.lower() for kw in _SAGA_RESOLUTION_KEYWORDS):
+                print(f"[topic_finder] サーガ追跡終了（決着済み）: {player}")
+                continue
+            try:
+                last_dt = datetime.fromisoformat(last_date)
+                age_days = (datetime.now() - last_dt).total_seconds() / 86400
+            except Exception:
+                age_days = stale_days
+            if age_days < stale_days:
+                continue
+            print(f"[topic_finder] サーガ停滞検出（{age_days:.1f}日更新なし）: {player}")
+
+        try:
+            resp = client.search(
+                f"{player} transfer news latest",
+                search_depth="advanced",
+                max_results=5,
+                include_domains=include_domains,
+                days=stale_days + 2,
+            )
+        except Exception as e:
+            print(f"[topic_finder] サーガ検索失敗 '{player}': {e}")
+            continue
+
+        for item in resp.get("results", []):
+            url = item.get("url", "")
+            title = item.get("title", "").strip()
+            if not title or not url or not _is_article_url(url) or not _is_article_title(title):
+                continue
+            if not _is_saga_news_article(title):
+                continue
+            if last_title and title.strip().lower() == last_title.strip().lower():
+                continue
+            score = int(item.get("score", 0.0) * 10000) + 50_000  # 追跡案件は優先表示
+            topics.append(Topic(title=title, url=url, score=score))
+            print(f"[topic_finder] サーガ続報検出: {player} -> {title}")
+
+    return topics
+
+
 def find_topics_transfers(config_path: str = "config.yaml") -> list[Topic]:
     """移籍ニュース専用トピック取得（Twitter トレンド優先、Man United 以外）"""
     config = load_config(config_path)
@@ -568,6 +822,12 @@ def find_topics_transfers(config_path: str = "config.yaml") -> list[Topic]:
         return _is_global_transfer(title, url)
 
     topics: list[Topic] = []
+
+    try:
+        saga_topics = get_saga_followup_topics(config_path=config_path)
+        topics.extend(saga_topics)
+    except Exception as e:
+        print(f"[topic_finder] サーガ追跡失敗: {e}")
 
     if nitter_accounts:
         nitter_topics = get_nitter_topics(

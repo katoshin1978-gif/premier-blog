@@ -26,7 +26,14 @@ from image_fetcher import fetch_image, fetch_player_images
 from publisher import publish_draft, upload_media, insert_player_images
 from researcher import search_articles
 from synthesizer import generate_article
-from topic_finder import Topic, find_topics, find_topics_transfers, find_topics_europe, select_topic
+from topic_finder import (
+    Topic,
+    extract_player_name,
+    find_topics,
+    find_topics_transfers,
+    find_topics_europe,
+    select_topic,
+)
 
 load_dotenv()
 
@@ -165,21 +172,6 @@ def init_db(db_path: str = DB_PATH) -> sqlite3.Connection:
     """)
     conn.commit()
     return conn
-
-
-def extract_player_name(title: str) -> str | None:
-    """移籍記事タイトルから選手名を抽出（先頭の大文字連続語2〜3語）"""
-    # [account] プレフィックスを除去
-    title = re.sub(r'^\[[^\]]+\]\s*', '', title)
-    words = title.split()
-    name_parts = []
-    for word in words[:5]:
-        clean = re.sub(r'[^a-zA-Z\-]', '', word)
-        if clean and clean[0].isupper() and len(clean) > 1:
-            name_parts.append(clean)
-        else:
-            break
-    return ' '.join(name_parts[:3]).lower() if len(name_parts) >= 2 else None
 
 
 def is_player_processed_today(conn: sqlite3.Connection, player_key: str, pipeline: str | None = None) -> bool:
