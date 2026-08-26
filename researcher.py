@@ -12,6 +12,8 @@ import re
 import unicodedata
 import warnings
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 import anthropic
@@ -72,10 +74,29 @@ class SearchResult:
     snippet: str
     domain: str = ""
     score: float = 0.0
+    published_date: str = ""  # ISO形式 (YYYY-MM-DD)。Tavilyが日付を返さない場合は空文字
 
     def __post_init__(self):
         if not self.domain:
             self.domain = urlparse(self.url).netloc.lstrip("www.")
+
+
+# ソースの主要情報がこれより古い場合は取得段階で除外する
+# （synthesizer側のSKIP_OLD_NEWS判定と揃える。Tavilyのdaysパラメータはランキングへの
+# 　ヒントに過ぎずハード制限ではないため、実日付でのフィルタを別途かける）
+_STALE_DAYS_THRESHOLD = 30
+
+
+def _parse_published_date(raw: str) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -171,6 +192,7 @@ def _run_search(
     include_domains: list[str],
     max_results: int,
     days: int | None = 14,
+    topic: str | None = "news",
 ) -> list[dict]:
     try:
         params: dict = dict(
@@ -181,6 +203,10 @@ def _run_search(
         )
         if days is not None:
             params["days"] = days  # 直近N日の記事に限定（オフシーズン対応、既定14日）
+        if topic is not None:
+            # topic="news" にするとTavilyがpublished_dateを返すようになり、
+            # 日付不明な古い一覧・タグページも検索結果から除外されやすくなる
+            params["topic"] = topic
         resp = client.search(**params)
         return resp.get("results", [])
     except Exception as e:
@@ -211,15 +237,17 @@ def search_articles(query: str, config_path: str = "config.yaml", context: str =
     # 日本語・非英語（伊語ツイート等）トピックは英語クエリに変換してから検索
     search_base = _translate_to_english_query(query, context=context) if (_is_japanese(query) or _looks_non_english(query)) else query
     search_query = _build_query(search_base, context)
-    # ロングテール（歴代記録・背番号一覧等）は直近ニュースではないため期間制限を外す
-    days = None if context == "longtail" else 14
-    all_items = _run_search(client, search_query, include_domains, max_results, days=days)
+    # ロングテール（歴代記録・背番号一覧等）は直近ニュースではないため期間制限・news扱いを外す
+    is_longtail = context == "longtail"
+    days = None if is_longtail else 14
+    topic = None if is_longtail else "news"
+    all_items = _run_search(client, search_query, include_domains, max_results, days=days, topic=topic)
 
     # Man United 関連トピックの場合は MEN・Metro を含む専用クエリを追加実行（defaultコンテキストのみ）
     if context == "default" and (_is_man_united_topic(query) or _is_man_united_topic(search_base)):
         mu_domains = list(set(include_domains + _MAN_UNITED_EXTRA_DOMAINS))
         mu_query = f"Manchester United {search_query}" if "manchester united" not in search_query.lower() else search_query
-        extra_items = _run_search(client, mu_query, mu_domains, max_results)
+        extra_items = _run_search(client, mu_query, mu_domains, max_results, topic=topic)
         all_items = all_items + extra_items
         print(f"[researcher] Man United 補完検索を実行: '{mu_query}'")
 
@@ -238,6 +266,13 @@ def search_articles(query: str, config_path: str = "config.yaml", context: str =
             print(f"[researcher] セクションページをスキップ: {url}")
             continue
 
+        published_dt = _parse_published_date(item.get("published_date", ""))
+        if published_dt is not None:
+            age_days = (datetime.now(timezone.utc) - published_dt).days
+            if age_days > _STALE_DAYS_THRESHOLD:
+                print(f"[researcher] 古い記事をスキップ（{age_days}日前・{published_dt.date()}）: {url}")
+                continue
+
         domain = urlparse(url).netloc.lstrip("www.")
         if seen_domains.get(domain, 0) >= 2:
             continue
@@ -249,6 +284,7 @@ def search_articles(query: str, config_path: str = "config.yaml", context: str =
             url=url,
             snippet=item.get("content", ""),
             score=item.get("score", 0.0),
+            published_date=published_dt.strftime("%Y-%m-%d") if published_dt else "",
         ))
 
     print(f"[researcher] '{search_query}' → {len(results)} 件の個別記事を取得")

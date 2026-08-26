@@ -67,10 +67,12 @@ def build_source_context(
         title = article.title or (result.title if result else "")
 
         excerpt = truncate_to_words(article.content, max_context_words)
+        published_line = f"Published: {result.published_date}\n" if result and result.published_date else ""
         section = (
             f"=== SOURCE: {site_name} ===\n"
             f"Title: {title}\n"
             f"URL: {article.url}\n"
+            f"{published_line}"
             f"Content ({max_context_words} words max):\n{excerpt}\n"
         )
         sections.append(section)
@@ -84,10 +86,12 @@ def build_source_context(
             continue
         site_name = urlparse(result.url).netloc.lstrip("www.")
         excerpt = truncate_to_words(result.snippet, max_context_words // 2)
+        published_line = f"Published: {result.published_date}\n" if result.published_date else ""
         section = (
             f"=== SOURCE (snippet only): {site_name} ===\n"
             f"Title: {result.title}\n"
             f"URL: {result.url}\n"
+            f"{published_line}"
             f"Snippet:\n{excerpt}\n"
         )
         sections.append(section)
@@ -316,7 +320,14 @@ def generate_article(
     config = load_config(config_path)
     max_quote_words = config["search"].get("max_quote_words", MAX_QUOTE_WORDS)
     # AI への入力は多めに渡す（著作権配慮は出力側の100語制限で担保）
-    max_context_words = config["search"].get("max_context_words", 500)
+    # ロングテール記事はTransfermarkt等の生データ表をソースにすることが多く、
+    # ナビゲーション等のノイズに埋もれて古いデータが切り捨てられやすいため別枠で多めに確保する
+    if context == "longtail":
+        max_context_words = config["search"].get(
+            "longtail_max_context_words", config["search"].get("max_context_words", 500)
+        )
+    else:
+        max_context_words = config["search"].get("max_context_words", 500)
 
     source_context = build_source_context(articles, search_results, max_context_words, max_quote_words)
 
@@ -364,8 +375,12 @@ def generate_article(
         user_message = (
             f"以下のトピックについて、提供されたソースを使って日本語記事を生成してください。\n\n"
             f"【重要】今日の日付: {today_str}\n"
-            f"ソース記事に含まれる日付を確認し、主要な情報が30日以上前のものであれば記事を書かず、"
-            f"代わりに「SKIP_OLD_NEWS」とだけ出力してください。\n"
+            f"各ソースには可能な場合「Published: YYYY-MM-DD」という実際の公開日が付記されている。"
+            f"これは本文中の記述から推測した日付より信頼できる一次情報なので、新旧判断は本文の"
+            f"推測より必ずこのPublished日付を優先すること。Publishedが今日から30日以上前のソースが"
+            f"記事の主要な情報源になっている場合は記事を書かず、代わりに「SKIP_OLD_NEWS」とだけ"
+            f"出力してください。Publishedが付いていないソースについては、ソース記事に含まれる日付を"
+            f"確認し、主要な情報が30日以上前のものであれば同様にSKIP_OLD_NEWSを選ぶこと。\n"
             f"ソース中に今日と異なる年（例：今日が{today_str[:4]}年なのに{int(today_str[:4])-1}年や"
             f"それ以前の年号）が明記されている場合、それは別シーズン・過去の出来事の記事である"
             f"可能性が高い。特に「開幕戦」「今シーズン初」等、既に一度しか起こらないはずの出来事に"
@@ -381,7 +396,14 @@ def generate_article(
             f"このズレを見つけても、その記事固有の出来事（試合結果・スコア・采配判断など）に現在の監督の"
             f"名前を機械的に貼り替えてはならない（実際には起きていない出来事を捏造することになる）。"
             f"そのソースが記事の主要な情報源である場合はSKIP_OLD_NEWSを選ぶこと。監督名の食い違いが"
-            f"背景的な言及に留まり主題と無関係な場合のみ、その部分を省略して続行してよい。\n\n"
+            f"背景的な言及に留まり主題と無関係な場合のみ、その部分を省略して続行してよい。\n"
+            f"【監督の「地位」の食い違いにも同様に注意】監督名が一致していても、ソースが「interim」"
+            f"「caretaker」「暫定」「should get the full-time job」「まだ正式任命されていない」等、"
+            f"下記クラブ基本情報の記載（noteに就任時期・現在の地位が明記されている場合はそれを正とする）"
+            f"と矛盾する地位でその監督を扱っている場合も、名前の食い違いと同じく古い記事の強いシグナル。"
+            f"複数ソースを1本の記事に統合する際、片方が現在の地位（正式監督）を前提にし、もう片方が"
+            f"古い地位（暫定・任命待ち）を前提にしている場合、新しい方のソースの前提に揃え、古い方に"
+            f"由来する「まだ正式任命されていない」「続投すべきか」等の記述は本文に含めないこと。\n\n"
             f"トピック: {topic}\n\n"
             f"{club_facts_text}"
             f"--- ソース情報 ---\n{source_context}\n--- ここまで ---\n\n"

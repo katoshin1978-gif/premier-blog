@@ -36,6 +36,7 @@ sources:
 search:
   max_results: 10
   max_context_words: 800
+  longtail_max_context_words: 4000
   max_quote_words: 100
 topic:
   mode: rss
@@ -187,6 +188,7 @@ club_facts:
   manager: Andoni Iraola
 - club: マンチェスター・ユナイテッド
   manager: Michael Carrick
+  note: 2026年5月に暫定から正式監督に昇格済み。ソースが「interim」「caretaker」「should get the full-time job」等、暫定・任命待ちの扱いで書いている場合はそれ以前の古い記事である強いシグナル
 - club: ニューカッスル
   manager: Eddie Howe
 - club: ノッティンガム・フォレスト
