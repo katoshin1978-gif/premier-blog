@@ -532,9 +532,10 @@ def _suggest_affiliate_keywords(title: str, content_hint: str = "") -> list[str]
         return []
 
 
-def _suggest_kamo_team(title: str, content_hint: str = "") -> str | None:
-    """記事の中心クラブ名を1つ抽出する（サッカーショップKAMOのユニフォーム検索キーワード用）。
-    特定のクラブに絞れない記事（総論・データ記事等）ではNoneを返し、KAMOカードを出さない。"""
+def _suggest_kamo_item(title: str, content_hint: str = "") -> str | None:
+    """サッカーショップKAMO（ユニフォーム・スパイク・ボール・GK用品・ファングッズ等を扱う
+    総合サッカー専門店）向けの検索キーワードを1つ提案する。記事の中心クラブが特定できない
+    記事（総論・データ記事・複数クラブが並列の記事等）ではNoneを返し、KAMOカードを出さない。"""
     import anthropic, httpx
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -545,24 +546,32 @@ def _suggest_kamo_team(title: str, content_hint: str = "") -> str | None:
         client = anthropic.Anthropic(api_key=api_key, http_client=http_client)
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=30,
+            max_tokens=40,
             messages=[{
                 "role": "user",
                 "content": (
                     f"記事タイトル: 「{title}」{hint_block}\n\n"
-                    "この記事で最も中心的なサッカークラブ名を1つだけ、日本語の一般的な呼称で出力。\n"
-                    "特定のクラブに絞れない記事（総論・データ記事・複数クラブが並列の記事等）なら"
-                    "「なし」とだけ出力。\n"
-                    "クラブ名のみ出力（説明不要、例: アーセナル）:"
+                    "サッカーショップKAMO（ユニフォーム・スパイク・サッカーボール・"
+                    "キーパー用品・ファングッズ・バッグ等を扱う総合サッカー専門店）向けの"
+                    "検索キーワードを考える。\n"
+                    "手順:\n"
+                    "1. この記事で最も中心的なサッカークラブ名を1つ特定する。特定のクラブに"
+                    "絞れない記事（総論・データ記事・複数クラブが並列の記事等）なら「なし」"
+                    "とだけ出力して終了。\n"
+                    "2. 記事内容に応じて商品カテゴリを選ぶ（GK関連の話題ならキーパーグローブ、"
+                    "得点者・FWの活躍が主題ならスパイク、特に手がかりがなければユニフォーム）。\n"
+                    "3. 「クラブ名 商品カテゴリ」の形式で検索キーワードを1行だけ出力する"
+                    "（例: アーセナル ユニフォーム、マンチェスター・シティ スパイク）。"
+                    "説明不要、日本語の一般的な呼称を使う。"
                 ),
             }],
         )
         text = resp.content[0].text.strip()
-        if not text or text == "なし" or len(text) > 20:
+        if not text or text == "なし" or len(text) > 30:
             return None
         return text
     except Exception as e:
-        print(f"[publisher] KAMOクラブ名抽出失敗: {e}")
+        print(f"[publisher] KAMOキーワード提案失敗: {e}")
         return None
 
 
@@ -579,15 +588,15 @@ def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, 
         return ""
 
     # topic_titleが渡された場合はAIで動的キーワードを生成する。記事の中心クラブが特定できる
-    # 場合はKAMO（ユニフォーム専門店）を1枠に割り当て、残りをrakutenの動的キーワードで埋める。
-    # 全体の動的枠数は2のまま変えない（広告密度を増やさないため）
+    # 場合はKAMO（ユニフォーム・スパイク・ボール等を扱う総合サッカー専門店）を1枠に割り当て、
+    # 残りをrakutenの動的キーワードで埋める。全体の動的枠数は2のまま変えない（広告密度を増やさないため）
     dynamic_items: list[dict] = []
     if topic_title and rakuten_id:
-        team = _suggest_kamo_team(topic_title, content_hint) if kamo_sid else None
-        if team:
-            dynamic_items.append({"label": f"{team} ユニフォーム", "team": team, "store": "kamo"})
+        kamo_kw = _suggest_kamo_item(topic_title, content_hint) if kamo_sid else None
+        if kamo_kw:
+            dynamic_items.append({"label": kamo_kw, "kw": kamo_kw, "store": "kamo"})
         kws = _suggest_affiliate_keywords(topic_title, content_hint)
-        remaining = 1 if team else 2
+        remaining = 1 if kamo_kw else 2
         for kw in kws[:remaining]:
             dynamic_items.append({"label": kw, "kw": kw.replace(" ", "+"), "store": "rakuten"})
 
@@ -636,12 +645,11 @@ def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, 
                         item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
                     ))
         elif item["store"] == "kamo" and kamo_sid:
-            team = item["team"]
-            kamo_url = _kamo_search_deeplink(f"{team} ユニフォーム")
+            kamo_url = _kamo_search_deeplink(item["kw"])
             if kamo_url:
                 cards.append(_aff_card_icon(
-                    kamo_url, "👕", "サッカーショップKAMO", "#0B5D2E",
-                    f"{team}のユニフォームを探す", "海外クラブの公式レプリカを豊富に取り扱い", "商品を見る"
+                    kamo_url, "⚽", "サッカーショップKAMO", "#0B5D2E",
+                    f"{item['kw']}を探す", "海外クラブの公式グッズを豊富に取り扱い", "商品を見る"
                 ))
         elif item["store"] == "rakuten_tv" and rakuten_id:
             url = f"https://hb.afl.rakuten.co.jp/ichiba/{rakuten_id}/?pc=https%3A%2F%2Ftv.rakuten.co.jp%2Fsports%2Fsoccer%2F"
