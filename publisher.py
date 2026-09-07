@@ -596,28 +596,26 @@ def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, 
             "プレミアリーグ全試合配信", "いつでもどこでも視聴可能", "無料体験"
         ))
 
-    # Amazon Prime（全カテゴリ共通）
-    if amazon_id:
-        prime_url = f"https://www.amazon.co.jp/prime?tag={amazon_id}"
+    # 視聴・渡航系の固定枠は記事を広告だらけに見せないよう、カテゴリごとに最も文脈が
+    # 合う1枠だけを表示する（Amazon Prime / agoda / WOWOWオンデマンドの同時表示はしない）。
+    # europe: 海外サッカー配信の文脈が強いWOWOW / transfers: 移籍先クラブ渡航の文脈でagoda / それ以外: 汎用のAmazon Prime
+    if category_id == 8 and wowow_id:
+        wowow_url = f"https://px.a8.net/svt/ejp?a8mat={wowow_id}"
         cards.append(_aff_card_icon(
-            prime_url, "▶", "Amazon Prime", "#00A8E1",
-            "Prime Video スポーツ・映画見放題", "30日間無料体験あり", "無料で試す"
+            wowow_url, "📺", "WOWOWオンデマンド", "#7B2D8E",
+            "CL・EL含む海外サッカーを配信", "月額2,530円で見放題", "無料体験"
         ))
-
-    # agoda（全カテゴリ共通）
-    if agoda_id:
+    elif category_id == 7 and agoda_id:
         agoda_url = f"https://px.a8.net/svt/ejp?a8mat={agoda_id}"
         cards.append(_aff_card_icon(
             agoda_url, "🏨", "agoda", "#EC1C43",
             "海外ホテル予約", "現地観戦の宿探しはこちら", "予約する"
         ))
-
-    # WOWOWオンデマンド（全カテゴリ共通）
-    if wowow_id:
-        wowow_url = f"https://px.a8.net/svt/ejp?a8mat={wowow_id}"
+    elif amazon_id:
+        prime_url = f"https://www.amazon.co.jp/prime?tag={amazon_id}"
         cards.append(_aff_card_icon(
-            wowow_url, "📺", "WOWOWオンデマンド", "#7B2D8E",
-            "CL・EL含む海外サッカーを配信", "月額2,530円で見放題", "無料体験"
+            prime_url, "▶", "Amazon Prime", "#00A8E1",
+            "Prime Video スポーツ・映画見放題", "30日間無料体験あり", "無料で試す"
         ))
 
     return cards
