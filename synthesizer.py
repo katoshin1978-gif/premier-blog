@@ -186,6 +186,27 @@ Antonio Conte=アントニオ・コンテ / Thomas Tuchel=トーマス・トゥ�
 Oliver Glasner=オリバー・グラスナー / Fabian Hürzeler=ファビアン・ヒュルゼラー
 """
 
+
+def build_club_facts_text(config: dict) -> str:
+    """config.yaml の club_facts（現監督名など）をプロンプト用テキストに変換。
+    記事生成の全経路（通常記事・試合分析・プレビュー）で共通利用し、
+    学習知識由来の古い監督名（例：解任済みの前任監督）が混入するのを防ぐ。"""
+    club_facts = config.get("club_facts", [])
+    if not club_facts:
+        return ""
+    lines = []
+    for cf in club_facts:
+        line = f"- {cf['club']}: 監督={cf['manager']}"
+        if cf.get("note"):
+            line += f"（{cf['note']}）"
+        lines.append(line)
+    return (
+        f"【クラブ基本情報（必ず正確に使用すること・自身の知識やソース情報より優先）】\n"
+        + "\n".join(lines)
+        + "\n\n"
+    )
+
+
 SYSTEM_PROMPT = """あなたはプレミアリーグ専門の日本語スポーツライターです。長年のサッカー取材・戦術分析の経験を持ち、単なるニュース転載ではなく独自の視点と深い洞察で読者に価値を提供します。
 
 【絶対に守るルール】
@@ -334,21 +355,7 @@ def generate_article(
     from datetime import date as _date
     today_str = _date.today().strftime("%Y年%m月%d日")
 
-    # config.yaml の club_facts をプロンプト用テキストに変換
-    club_facts = config.get("club_facts", [])
-    club_facts_text = ""
-    if club_facts:
-        lines = []
-        for cf in club_facts:
-            line = f"- {cf['club']}: 監督={cf['manager']}"
-            if cf.get("note"):
-                line += f"（{cf['note']}）"
-            lines.append(line)
-        club_facts_text = (
-            f"【クラブ基本情報（必ず正確に使用すること・ソース情報より優先）】\n"
-            + "\n".join(lines)
-            + "\n\n"
-        )
+    club_facts_text = build_club_facts_text(config)
 
     if context == "longtail":
         user_message = (

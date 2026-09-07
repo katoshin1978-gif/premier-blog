@@ -15,7 +15,14 @@ from dotenv import load_dotenv
 
 from fetcher import fetch_articles
 from researcher import search_articles
-from synthesizer import GeneratedArticle, PLAYER_NAMES_GUIDE, _extract_seo_meta, _extract_title, check_title_ctr_risk
+from synthesizer import (
+    GeneratedArticle,
+    PLAYER_NAMES_GUIDE,
+    _extract_seo_meta,
+    _extract_title,
+    build_club_facts_text,
+    check_title_ctr_risk,
+)
 
 load_dotenv()
 
@@ -289,9 +296,14 @@ def generate_analysis_article(
 
     match_facts = _build_match_facts(match)
     source_ctx = build_source_context(articles, search_results, max_context_words, max_quote_words)
+    club_facts_text = build_club_facts_text(cfg)
 
     user_message = (
         f"以下の試合について戦術分析記事を生成してください。\n\n"
+        f"{club_facts_text}"
+        f"【監督名について】自身の学習知識にある監督名ではなく、上記クラブ基本情報の監督名を"
+        f"現在の監督として扱うこと。ソースが古い監督の名前で言及している場合も同様。ただし、"
+        f"この試合そのものを指揮していた監督が別人だとソースから明確な場合はその人物名を使う。\n\n"
         f"{match_facts}\n\n"
         f"--- ソース情報 ---\n{source_ctx}\n--- ここまで ---\n\n"
         f"試合データとソースを踏まえ、指定フォーマットで日本語の分析記事を生成してください。\n"
@@ -432,9 +444,13 @@ def generate_preview_article(
 
     preview_facts = _build_preview_facts(match)
     source_ctx = build_source_context(articles, search_results, max_context_words, max_quote_words)
+    club_facts_text = build_club_facts_text(cfg)
 
     user_message = (
         f"以下の試合についてプレビュー記事を生成してください。\n\n"
+        f"{club_facts_text}"
+        f"【監督名について】自身の学習知識にある監督名ではなく、上記クラブ基本情報の監督名を"
+        f"現在の監督として扱うこと。ソースが古い監督の名前で言及している場合も同様。\n\n"
         f"{preview_facts}\n\n"
         f"--- ソース情報 ---\n{source_ctx}\n--- ここまで ---\n\n"
         f"試合データとソースを踏まえ、指定フォーマットで日本語のプレビュー記事を生成してください。\n"
