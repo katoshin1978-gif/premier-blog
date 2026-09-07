@@ -7,7 +7,7 @@ import os
 import base64
 import socket
 from dataclasses import dataclass
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, quote
 
 import requests
 import urllib3
@@ -331,6 +331,26 @@ _AFFILIATE_CONFIG: dict[int, list[dict]] = {
 
 _RAKUTEN_ENDPOINT = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401"
 
+# サッカーショップKAMO（LinkShare/リンクシェア経由）。汎用の /deeplink エンドポイント
+# (id=SID&mid=MID&murl=...) は400エラーで拒否されたため、ユーザーが取得済みの承認済みリンク
+# コードのofferid（123265.243612402261422、type=2）をそのまま流用し、murlだけ差し替える方式を
+# 使う。curlで検証済み: このoferidを使えばmurlに任意のKAMO内URL（検索結果ページ含む）を指定して
+# 正常にリダイレクトされる（動作しない/deeplink形式では出さない）。SIDのみ.envの
+# KAMO_LINKSHARE_SIDで発行者ごとに管理する
+_KAMO_OFFERID = "123265.243612402261422"
+
+
+def _kamo_search_deeplink(keyword: str) -> str | None:
+    """LinkShare経由でKAMOのキーワード検索結果ページへのアフィリエイトURLを生成する"""
+    sid = os.environ.get("KAMO_LINKSHARE_SID", "")
+    if not sid:
+        return None
+    search_url = f"https://www.sskamo.co.jp/s/goods/search.aspx?search=x&keyword={quote(keyword)}"
+    return (
+        f"https://click.linksynergy.com/link?id={sid}&offerid={_KAMO_OFFERID}"
+        f"&type=2&murl={quote(search_url, safe='')}&LSNSUBSITE=LSNSUBSITE"
+    )
+
 
 def _fetch_rakuten_product(keyword: str) -> dict | None:
     """楽天商品検索（新エンドポイント、WEBアプリ型認証・直接呼び出し）"""
@@ -512,6 +532,40 @@ def _suggest_affiliate_keywords(title: str, content_hint: str = "") -> list[str]
         return []
 
 
+def _suggest_kamo_team(title: str, content_hint: str = "") -> str | None:
+    """記事の中心クラブ名を1つ抽出する（サッカーショップKAMOのユニフォーム検索キーワード用）。
+    特定のクラブに絞れない記事（総論・データ記事等）ではNoneを返し、KAMOカードを出さない。"""
+    import anthropic, httpx
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        hint_block = f"\n記事冒頭: 「{content_hint[:250]}」" if content_hint else ""
+        http_client = httpx.Client(verify=False) if not _SSL_VERIFY else None
+        client = anthropic.Anthropic(api_key=api_key, http_client=http_client)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=30,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"記事タイトル: 「{title}」{hint_block}\n\n"
+                    "この記事で最も中心的なサッカークラブ名を1つだけ、日本語の一般的な呼称で出力。\n"
+                    "特定のクラブに絞れない記事（総論・データ記事・複数クラブが並列の記事等）なら"
+                    "「なし」とだけ出力。\n"
+                    "クラブ名のみ出力（説明不要、例: アーセナル）:"
+                ),
+            }],
+        )
+        text = resp.content[0].text.strip()
+        if not text or text == "なし" or len(text) > 20:
+            return None
+        return text
+    except Exception as e:
+        print(f"[publisher] KAMOクラブ名抽出失敗: {e}")
+        return None
+
+
 def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, content_hint: str = "") -> list[str]:
     """カテゴリ・記事内容に応じたアフィリエイトカードHTMLのリストを生成する"""
     amazon_id  = os.environ.get("AMAZON_ASSOCIATE_ID", "")
@@ -520,14 +574,21 @@ def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, 
     dazn_url   = os.environ.get("DAZN_AFFILIATE_URL", "")
     agoda_id   = os.environ.get("AGODA_AFFILIATE_ID", "")
     wowow_id   = os.environ.get("WOWOW_AFFILIATE_ID", "")
-    if not amazon_id and not rakuten_id and not sptv_id and not dazn_url and not agoda_id and not wowow_id:
+    kamo_sid   = os.environ.get("KAMO_LINKSHARE_SID", "")
+    if not amazon_id and not rakuten_id and not sptv_id and not dazn_url and not agoda_id and not wowow_id and not kamo_sid:
         return ""
 
-    # topic_titleが渡された場合はAIで動的キーワードを生成してrakutenカードに使う
+    # topic_titleが渡された場合はAIで動的キーワードを生成する。記事の中心クラブが特定できる
+    # 場合はKAMO（ユニフォーム専門店）を1枠に割り当て、残りをrakutenの動的キーワードで埋める。
+    # 全体の動的枠数は2のまま変えない（広告密度を増やさないため）
     dynamic_items: list[dict] = []
     if topic_title and rakuten_id:
+        team = _suggest_kamo_team(topic_title, content_hint) if kamo_sid else None
+        if team:
+            dynamic_items.append({"label": f"{team} ユニフォーム", "team": team, "store": "kamo"})
         kws = _suggest_affiliate_keywords(topic_title, content_hint)
-        for kw in kws[:2]:
+        remaining = 1 if team else 2
+        for kw in kws[:remaining]:
             dynamic_items.append({"label": kw, "kw": kw.replace(" ", "+"), "store": "rakuten"})
 
     items = dynamic_items if dynamic_items else _AFFILIATE_CONFIG.get(category_id, [
@@ -574,6 +635,14 @@ def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, 
                         search_url, "🛒", "楽天市場", "#BF0000",
                         item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
                     ))
+        elif item["store"] == "kamo" and kamo_sid:
+            team = item["team"]
+            kamo_url = _kamo_search_deeplink(f"{team} ユニフォーム")
+            if kamo_url:
+                cards.append(_aff_card_icon(
+                    kamo_url, "👕", "サッカーショップKAMO", "#0B5D2E",
+                    f"{team}のユニフォームを探す", "海外クラブの公式レプリカを豊富に取り扱い", "商品を見る"
+                ))
         elif item["store"] == "rakuten_tv" and rakuten_id:
             url = f"https://hb.afl.rakuten.co.jp/ichiba/{rakuten_id}/?pc=https%3A%2F%2Ftv.rakuten.co.jp%2Fsports%2Fsoccer%2F"
             cards.append(_aff_card_icon(
