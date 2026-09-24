@@ -1,0 +1,73 @@
+name: Weekly Content Audit
+
+on:
+  schedule:
+    - cron: '0 22 * * 6'  # 毎週土曜 22:00 UTC = 日曜 7:00 JST
+  workflow_dispatch:       # 手動実行ボタン
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+
+    env:
+      WP_URL: ${{ secrets.WP_URL }}
+      WP_USERNAME: ${{ secrets.WP_USERNAME }}
+      WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+      SSL_VERIFY: "false"
+      RESOLVE_TO_IP: "false"
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存パッケージインストール
+        run: pip install -r requirements.txt
+
+      - name: 薄い記事の棚卸し実行
+        run: python audit_thin_articles.py --out thin_articles.csv | tee thin_audit_log.txt
+
+      - name: ロングテール記事の生成状況確認
+        run: python list_longtail_posts.py | tee longtail_status.txt
+
+      - name: レポートをコミット
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add thin_articles.csv longtail_status.txt
+          git diff --staged --quiet || git commit -m "chore: 週次コンテンツ監査レポート更新 [skip ci]"
+          git push
+
+      - name: サマリ作成
+        id: summary
+        run: |
+          {
+            echo "body<<GHSUMMARYEOF"
+            echo "## 薄い記事の棚卸し"
+            tail -2 thin_audit_log.txt
+            echo ""
+            echo "## ロングテール記事の生成状況"
+            echo "未生成のお題数: $(grep -c '未生成' longtail_status.txt || echo 0)"
+            echo ""
+            echo "---"
+            echo "詳細は \`thin_articles.csv\` と \`longtail_status.txt\` をリポジトリで確認。"
+            echo "薄い記事のnoindex適用は \`apply_noindex.py\` で個別承認の上実施。"
+            echo "ピラー記事候補の追加は \`config.yaml: internal_links.pillar_posts\` に手動反映。"
+            echo "GHSUMMARYEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Issue作成
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "週次コンテンツ監査レポート ($(date +%Y-%m-%d))" \
+            --body "${{ steps.summary.outputs.body }}"
