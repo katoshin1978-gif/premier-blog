@@ -7,7 +7,7 @@ import os
 import base64
 import socket
 from dataclasses import dataclass
-from urllib.parse import urlparse, urlunparse, quote
+from urllib.parse import urlparse, urlunparse
 
 import requests
 import urllib3
@@ -297,6 +297,78 @@ def _fetch_related_posts(
     return posts[:count]
 
 
+def _fetch_pillar_post(
+    ip_base_url: str,
+    host_header: dict,
+    category_ids: list[int],
+    exclude_id: int,
+    pillar_map: dict[int, int],
+) -> dict | None:
+    """カテゴリ群（優先順）に対応するピラー記事（config.yaml: internal_links.pillar_posts で
+    指定した評価の高いロングテール記事）を1件取得する。新着記事に埋もれて内部リンクが
+    途絶えるのを防ぐための固定枠"""
+    for category_id in category_ids:
+        post_id = pillar_map.get(category_id)
+        if not post_id or post_id == exclude_id:
+            continue
+        try:
+            resp = requests.get(
+                f"{ip_base_url}/wp-json/wp/v2/posts/{post_id}",
+                params={"status": "publish"},
+                headers={**_get_auth_header(), **host_header},
+                timeout=15,
+                verify=_SSL_VERIFY,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            continue
+    return None
+
+
+def fetch_all_published_posts(base_url: str, ip_base_url: str, host_header: dict) -> list[dict]:
+    """公開済み全記事をページングして取得する（内部リンクのバックフィル・棚卸し監査用）"""
+    posts: list[dict] = []
+    page = 1
+    while True:
+        try:
+            resp = requests.get(
+                f"{ip_base_url}/wp-json/wp/v2/posts",
+                params={"status": "publish", "per_page": 100, "page": page,
+                        "orderby": "id", "order": "asc", "context": "edit"},
+                headers={**_get_auth_header(), **host_header},
+                timeout=30,
+                verify=_SSL_VERIFY,
+            )
+            if resp.status_code == 400:
+                break
+            resp.raise_for_status()
+        except Exception as e:
+            print(f"[publisher] 全記事取得失敗 (page={page}): {e}")
+            break
+        batch = resp.json()
+        if not batch:
+            break
+        posts.extend(batch)
+        total_pages = int(resp.headers.get("X-WP-TotalPages", "1"))
+        if page >= total_pages:
+            break
+        page += 1
+    return posts
+
+
+# カテゴリID → 表示名（functions.php の pl_category_label() とラベルを揃える）
+_CATEGORY_LABELS: dict[str, str] = {
+    "match-reviews": "試合レビュー",
+    "tactics": "戦術分析",
+    "united": "ユナイテッド",
+    "transfers": "移籍・噂",
+    "europe": "欧州",
+    "data": "データ",
+    "column": "コラム",
+}
+
+
 # カテゴリID → アフィリエイトリンク設定
 _AFFILIATE_CONFIG: dict[int, list[dict]] = {
     4: [  # match-reviews
@@ -331,25 +403,11 @@ _AFFILIATE_CONFIG: dict[int, list[dict]] = {
 
 _RAKUTEN_ENDPOINT = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401"
 
-# サッカーショップKAMO（LinkShare/リンクシェア経由）。汎用の /deeplink エンドポイント
-# (id=SID&mid=MID&murl=...) は400エラーで拒否されたため、ユーザーが取得済みの承認済みリンク
-# コードのofferid（123265.243612402261422、type=2）をそのまま流用し、murlだけ差し替える方式を
-# 使う。curlで検証済み: このoferidを使えばmurlに任意のKAMO内URL（検索結果ページ含む）を指定して
-# 正常にリダイレクトされる（動作しない/deeplink形式では出さない）。SIDのみ.envの
-# KAMO_LINKSHARE_SIDで発行者ごとに管理する
-_KAMO_OFFERID = "123265.243612402261422"
-
-
-def _kamo_search_deeplink(keyword: str) -> str | None:
-    """LinkShare経由でKAMOのキーワード検索結果ページへのアフィリエイトURLを生成する"""
-    sid = os.environ.get("KAMO_LINKSHARE_SID", "")
-    if not sid:
-        return None
-    search_url = f"https://www.sskamo.co.jp/s/goods/search.aspx?search=x&keyword={quote(keyword)}"
-    return (
-        f"https://click.linksynergy.com/link?id={sid}&offerid={_KAMO_OFFERID}"
-        f"&type=2&murl={quote(search_url, safe='')}&LSNSUBSITE=LSNSUBSITE"
-    )
+# サッカーショップ専門店の外部ASP提携（KAMO/LinkShare→ユニオンスポーツ/A8.netと試したが、
+# LinkShareの不調・A8.net側にユニオンスポーツの提携が見当たらない等で2026-09-24に断念。
+# 「記事に関連するクラブのユニフォームを本文中に出す」という本来の狙いは、既に契約済みの
+# 楽天アフィリエイト（_fetch_rakuten_product）だけで十分満たせるため、専門店の個別提携は
+# やめて楽天の動的キーワードに一本化した。詳細は_suggest_uniform_item()を参照
 
 
 def _fetch_rakuten_product(keyword: str) -> dict | None:
@@ -512,11 +570,12 @@ def _suggest_affiliate_keywords(title: str, content_hint: str = "") -> list[str]
                     "この記事を読んだサッカーファンが思わずクリックしたくなる楽天市場の商品キーワードを2つ、JSON配列で出力。\n"
                     "ルール:\n"
                     "- 記事に登場するクラブ名・選手名・地名・人名を最優先で使う\n"
-                    "- 移籍記事なら移籍先クラブのユニフォーム・グッズ、その地域の名産品も可\n"
+                    "- ユニフォームは別枠で必ず表示済みのため提案しない（重複を避ける）。グッズ・"
+                    "マフラー・その地域の名産品等、ユニフォーム以外を選ぶ\n"
                     "- コラム・人物記事なら関連書籍・自伝・DVD\n"
                     "- 意外性があっても読者が欲しくなるものを選ぶ（食品・雑貨・旅行グッズ等もOK）\n"
                     "- キーワードは楽天市場検索に適した自然な日本語（10文字以内）\n"
-                    "例: [\"アーセナル ユニフォーム\", \"ロンドン 紅茶\"] や [\"ファーガソン 自伝\", \"マンU マフラー\"]\n"
+                    "例: [\"マンU マフラー\", \"ロンドン 紅茶\"] や [\"ファーガソン 自伝\", \"サッカー 戦術本\"]\n"
                     "JSON配列のみ出力（説明不要）:"
                 ),
             }],
@@ -532,10 +591,10 @@ def _suggest_affiliate_keywords(title: str, content_hint: str = "") -> list[str]
         return []
 
 
-def _suggest_kamo_item(title: str, content_hint: str = "") -> str | None:
-    """サッカーショップKAMO（ユニフォーム・スパイク・ボール・GK用品・ファングッズ等を扱う
-    総合サッカー専門店）向けの検索キーワードを1つ提案する。記事の中心クラブが特定できない
-    記事（総論・データ記事・複数クラブが並列の記事等）ではNoneを返し、KAMOカードを出さない。"""
+def _suggest_uniform_item(title: str, content_hint: str = "") -> str | None:
+    """記事の中心クラブの「クラブ名 ユニフォーム」という楽天検索キーワードを1つ提案する。
+    本文中カード（最も露出が高い枠）に必ずユニフォームを出すための専用枠。記事の中心クラブが
+    特定できない記事（総論・データ記事・複数クラブが並列の記事等）ではNoneを返す。"""
     import anthropic, httpx
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -551,17 +610,13 @@ def _suggest_kamo_item(title: str, content_hint: str = "") -> str | None:
                 "role": "user",
                 "content": (
                     f"記事タイトル: 「{title}」{hint_block}\n\n"
-                    "サッカーショップKAMO（ユニフォーム・スパイク・サッカーボール・"
-                    "キーパー用品・ファングッズ・バッグ等を扱う総合サッカー専門店）向けの"
-                    "検索キーワードを考える。\n"
+                    "この記事で最も中心的なサッカークラブ名を1つ特定し、楽天市場で"
+                    "そのクラブのユニフォームを検索するためのキーワードを考える。\n"
                     "手順:\n"
-                    "1. この記事で最も中心的なサッカークラブ名を1つ特定する。特定のクラブに"
-                    "絞れない記事（総論・データ記事・複数クラブが並列の記事等）なら「なし」"
-                    "とだけ出力して終了。\n"
-                    "2. 記事内容に応じて商品カテゴリを選ぶ（GK関連の話題ならキーパーグローブ、"
-                    "得点者・FWの活躍が主題ならスパイク、特に手がかりがなければユニフォーム）。\n"
-                    "3. 「クラブ名 商品カテゴリ」の形式で検索キーワードを1行だけ出力する"
-                    "（例: アーセナル ユニフォーム、マンチェスター・シティ スパイク）。"
+                    "1. 特定のクラブに絞れない記事（総論・データ記事・複数クラブが並列の"
+                    "記事等）なら「なし」とだけ出力して終了。\n"
+                    "2. 「クラブ名 ユニフォーム」の形式でキーワードを1行だけ出力する"
+                    "（例: アーセナル ユニフォーム、マンチェスター・シティ ユニフォーム）。"
                     "説明不要、日本語の一般的な呼称を使う。"
                 ),
             }],
@@ -571,7 +626,7 @@ def _suggest_kamo_item(title: str, content_hint: str = "") -> str | None:
             return None
         return text
     except Exception as e:
-        print(f"[publisher] KAMOキーワード提案失敗: {e}")
+        print(f"[publisher] ユニフォームキーワード提案失敗: {e}")
         return None
 
 
@@ -583,20 +638,21 @@ def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, 
     dazn_url   = os.environ.get("DAZN_AFFILIATE_URL", "")
     agoda_id   = os.environ.get("AGODA_AFFILIATE_ID", "")
     wowow_id   = os.environ.get("WOWOW_AFFILIATE_ID", "")
-    kamo_sid   = os.environ.get("KAMO_LINKSHARE_SID", "")
-    if not amazon_id and not rakuten_id and not sptv_id and not dazn_url and not agoda_id and not wowow_id and not kamo_sid:
+    if not amazon_id and not rakuten_id and not sptv_id and not dazn_url and not agoda_id and not wowow_id:
         return ""
 
     # topic_titleが渡された場合はAIで動的キーワードを生成する。記事の中心クラブが特定できる
-    # 場合はKAMO（ユニフォーム・スパイク・ボール等を扱う総合サッカー専門店）を1枠に割り当て、
-    # 残りをrakutenの動的キーワードで埋める。全体の動的枠数は2のまま変えない（広告密度を増やさないため）
+    # 場合は必ず先頭（＝本文中に差し込まれる最も露出の高い枠）にそのクラブのユニフォームを
+    # 楽天で割り当てる。残り1枠は_suggest_affiliate_keywordsの動的キーワードで埋めるが、
+    # そちらのプロンプト側でユニフォームの重複提案を禁止し、末尾（tail）に同じユニフォームが
+    # 二重に出ないようにしている。全体の動的枠数は2のまま変えない（広告密度を増やさないため）
     dynamic_items: list[dict] = []
     if topic_title and rakuten_id:
-        kamo_kw = _suggest_kamo_item(topic_title, content_hint) if kamo_sid else None
-        if kamo_kw:
-            dynamic_items.append({"label": kamo_kw, "kw": kamo_kw, "store": "kamo"})
+        uniform_kw = _suggest_uniform_item(topic_title, content_hint)
+        if uniform_kw:
+            dynamic_items.append({"label": uniform_kw, "kw": uniform_kw.replace(" ", "+"), "store": "rakuten"})
         kws = _suggest_affiliate_keywords(topic_title, content_hint)
-        remaining = 1 if kamo_kw else 2
+        remaining = 1 if uniform_kw else 2
         for kw in kws[:remaining]:
             dynamic_items.append({"label": kw, "kw": kw.replace(" ", "+"), "store": "rakuten"})
 
@@ -644,13 +700,6 @@ def _generate_affiliate_cards(category_id: int, topic_title: str | None = None, 
                         search_url, "🛒", "楽天市場", "#BF0000",
                         item["label"], "楽天ポイントが貯まる・使える", "楽天で探す"
                     ))
-        elif item["store"] == "kamo" and kamo_sid:
-            kamo_url = _kamo_search_deeplink(item["kw"])
-            if kamo_url:
-                cards.append(_aff_card_icon(
-                    kamo_url, "⚽", "サッカーショップKAMO", "#0B5D2E",
-                    f"{item['kw']}を探す", "海外クラブの公式グッズを豊富に取り扱い", "商品を見る"
-                ))
         elif item["store"] == "rakuten_tv" and rakuten_id:
             url = f"https://hb.afl.rakuten.co.jp/ichiba/{rakuten_id}/?pc=https%3A%2F%2Ftv.rakuten.co.jp%2Fsports%2Fsoccer%2F"
             cards.append(_aff_card_icon(
@@ -741,11 +790,18 @@ def insert_mid_article_affiliate(html: str, card_html: str) -> str:
     return html[:insert_at] + block + html[insert_at:]
 
 
-def _build_related_html(posts: list[dict], data_room_url: str = "") -> str:
+def _build_related_html(
+    posts: list[dict],
+    data_room_url: str = "",
+    category_archive_url: str = "",
+    category_label: str = "",
+) -> str:
     items = "".join(
         f'<li><a href="{p["link"]}">{p["title"]["rendered"]}</a></li>'
         for p in posts
     )
+    if category_archive_url and category_label:
+        items += f'<li><a href="{category_archive_url}">{category_label}の記事一覧はこちら</a></li>'
     if data_room_url:
         items += f'<li><a href="{data_room_url}">4大リーグ順位表・得点ランキングまとめ【データ室】</a></li>'
     if not items:
@@ -828,8 +884,22 @@ def publish_draft(
         related = _fetch_related_posts(
             base_url, ip_base_url, host_header, category_ids, result.post_id
         )
+        pillar_map = {
+            int(k): v for k, v in config.get("internal_links", {}).get("pillar_posts", {}).items()
+        }
+        pillar = (
+            _fetch_pillar_post(ip_base_url, host_header, category_ids, result.post_id, pillar_map)
+            if pillar_map else None
+        )
+        if pillar:
+            related = [p for p in related if p["id"] != pillar["id"]]
+            related = [pillar] + related[:3]
+        slug_by_id = {v: k for k, v in wp_cfg.get("category_ids", {}).items()}
+        primary_slug = slug_by_id.get(primary_cat_id, "")
+        category_archive_url = f"{base_url}/category/{primary_slug}/" if primary_slug else ""
+        category_label = _CATEGORY_LABELS.get(primary_slug, "")
         data_room_url = f"{base_url}/data-room/"
-        related_html = _build_related_html(related, data_room_url)
+        related_html = _build_related_html(related, data_room_url, category_archive_url, category_label)
         suffix = ""
         if affiliate_html:
             suffix += "\n" + affiliate_html
