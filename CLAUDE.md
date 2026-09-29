@@ -68,6 +68,8 @@ topic_finder → researcher → fetcher → synthesizer → publisher
 
 **重複防止：** `processed.db`（SQLite）がトピックハッシュと試合IDを記録し、再実行時にスキップ。
 
+**同一選手の続報は既存記事を更新：** `main.py:decide_player_action()` が `player_dedup` テーブルから直近 `article.update_window_days`（30日）以内の同じ選手の記事IDを探し、あれば `synthesizer.py:generate_update_article()` で続報を統合（冒頭に【M月D日更新】、「## これまでの経緯」に時系列）して同じ記事IDに上書き保存する。公開済み記事も公開のまま更新（旧版はWPリビジョンに残る）。AIが「新事実なし」なら更新しない、「別の案件」なら新規記事に回す。記事IDの記録がない重複は `article.player_dedup_days`（7日）スキップ。本文が `article.min_body_chars`（1500字）未満の記事は投稿しない。
+
 ## Key Constraints
 
 - **著作権：** `synthesizer.py:truncate_to_words()` による `max_quote_words`（デフォルト100語）制限を絶対に緩めない。AI入力用の `max_context_words`（500語）とは別管理。

@@ -12,6 +12,7 @@ Man United 関連トピックは config.yaml の man_united_boost 倍のスコ�
 import os
 import re
 import random
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -143,7 +144,14 @@ _NON_NAME_WORDS = {
     # 見出しの定型語（選手名ではない）
     "transfer", "transfers", "latest", "new", "news", "rumours", "rumors", "market", "soccer",
     "papers", "report", "reports", "live", "as", "rt", "not", "club", "saudi", "just",
-    "chelseas", "arsenals", "liverpools", "tottenhams",
+    "chelseas", "arsenals", "liverpools", "tottenhams", "in", "centre", "center", "football",
+    "sports", "illustrated", "summary", "update", "updates", "rumour", "rumor", "window",
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "fabrizioromano", "fabrizio", "romano", "transfermarkt", "deadline", "day", "absolute",
+    "very", "top", "former", "more", "bayer", "leverkusen", "rb", "al", "hilal", "rangers",
+    "celtic", "coventry", "rennes", "strasbourg", "rc", "celta", "vigo", "sao", "paulo",
     # 国籍形容詞・年代カテゴリ等（選手名の前に付く記述語で、名前本体ではない）
     "english", "scottish", "welsh", "irish", "french", "german", "italian",
     "spanish", "portuguese", "dutch", "belgian", "brazilian", "argentine",
@@ -177,6 +185,12 @@ _GENERIC_REFERENCE_TITLE_PATTERNS = [
 ]
 
 
+def is_commentary_title(title: str) -> bool:
+    """評論家・監督のコメント記事か（選手単位の重複判定・記事更新の対象外にする）"""
+    t = title.lower()
+    return any(re.search(rf"\b{re.escape(k)}\b", t) for k in _PUNDIT_COMMENTARY_KEYWORDS + ["praises", "admits"])
+
+
 def _is_saga_news_article(title: str) -> bool:
     return not any(p.search(title) for p in _GENERIC_REFERENCE_TITLE_PATTERNS)
 
@@ -197,9 +211,13 @@ def extract_player_name(title: str) -> str | None:
     title = re.sub(r'^\[[^\]]+\]\s*', '', title)
     title = _EMOJI_RE.sub('', title).strip()
     title = _TITLE_FILLER_PREFIX.sub('', title)
+    # アクセント記号を除去（Fernández と Fernandez を同一人物として扱う）
+    title = ''.join(c for c in unicodedata.normalize('NFKD', title) if not unicodedata.combining(c))
     words = title.split()
 
     def _clean(word: str) -> str:
+        # 所有格（Brighton's → Brighton）を外してから英字以外を除去
+        word = re.sub(r"[’']s?[:;,]?$", '', word)
         return re.sub(r'[^a-zA-Z\-]', '', word)
 
     i = 0
@@ -211,6 +229,9 @@ def extract_player_name(title: str) -> str | None:
             if w and w[0].isupper() and len(w) > 1:
                 run.append(w)
                 j += 1
+                # 「Enzo Fernandez: Maresca ...」のように区切り記号の後ろは別の語句
+                if re.search(r"[:;,]$|[’']s$", words[j - 1]):
+                    break
             else:
                 break
         if run:

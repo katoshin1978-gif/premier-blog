@@ -517,6 +517,114 @@ def generate_article(
     return GeneratedArticle(title=title, content=content, sources=search_results, meta_description=meta_description)
 
 
+def generate_update_article(
+    topic: str,
+    existing_title: str,
+    existing_markdown: str,
+    existing_date: str,
+    articles: list[FetchedArticle],
+    search_results: list[SearchResult],
+    config_path: str = "config.yaml",
+) -> GeneratedArticle:
+    """同じ選手・案件の既存記事に新しいソースの続報を統合し、時系列付きで書き直す。
+    新事実がなければ content="SKIP_NO_NEW_FACTS" を返す。"""
+    config = load_config(config_path)
+    max_quote_words = config["search"].get("max_quote_words", MAX_QUOTE_WORDS)
+    max_context_words = config["search"].get("max_context_words", 500)
+    source_context = build_source_context(articles, search_results, max_context_words, max_quote_words)
+
+    from datetime import date as _date
+    today = _date.today()
+    today_str = today.strftime("%Y年%m月%d日")
+    today_md = f"{today.month}月{today.day}日"
+    ex = _date.fromisoformat(existing_date)
+    existing_md = f"{ex.month}月{ex.day}日"
+
+    club_facts_text = build_club_facts_text(config)
+
+    user_message = (
+        f"既に公開している記事に、新しいソースの続報を反映して記事全体を書き直してください。\n\n"
+        f"【重要】今日の日付: {today_str}\n"
+        f"既存記事の初出日: {existing_md}\n\n"
+        f"【同じ案件かの判定（最初に行うこと）】\n"
+        f"新しいソースの主題が既存記事と別の案件・別の話題である場合（同じ人物名が出てくるだけで、"
+        f"移籍先や交渉相手・出来事が異なる等）は、記事を書かず「SKIP_DIFFERENT_STORY」とだけ出力すること。\n\n"
+        f"【新事実の有無の判定（次に行うこと）】\n"
+        f"新しいソースに、既存記事に書かれていない事実（交渉の進展・合意・正式発表・破談・金額や条件の"
+        f"変化・新たに関与したクラブ等）が1つもない場合、または新しいソースの主要な情報が既存記事の"
+        f"初出日より古い場合は、記事を書かず「SKIP_NO_NEW_FACTS」とだけ出力すること。"
+        f"言い回しが違うだけの同じ情報は新事実ではない。\n"
+        f"判定語（SKIP_DIFFERENT_STORY / SKIP_NO_NEW_FACTS）を出力する場合は、判定理由などを一切書かず判定語だけを出力する。\n\n"
+        f"【書き直しのルール】\n"
+        f"- システムプロンプトの出力フォーマット・文字数目標・移籍確度の表現ルールはすべて守る\n"
+        f"- 記事の主題は最新の状況に置き換える。古い段階の情報（例：「関心」段階の記述）が新しい事実"
+        f"（例：「合意」）と矛盾する場合、本文は最新の事実に合わせ、古い情報は経緯としてのみ扱う\n"
+        f"- 「## はじめに」の本文の先頭行に「**【{today_md}更新】** {{今回の更新の要点を1文で}}」を入れる\n"
+        f"- 「## 戦術的考察」の直前に「## これまでの経緯」を設け、「- {{M月D日}}：{{出来事}}」の"
+        f"箇条書きで古い順に並べる\n"
+        f"- 【時系列の厳守】経緯に書く日付は、既存記事の初出日（{existing_md}）、既存記事の情報源に"
+        f"明記された日付、新しいソースの「Published:」の日付だけを使う。日付が特定できない出来事に日付を推測で付けることは禁止。"
+        f"その場合は日付の分かる出来事の説明の中で触れるか、経緯から省く。"
+        f"年は書かず「M月D日」の形式にする\n"
+        f"- 既存記事の本文に書かれた事実は、新しいソースで否定されていない限り維持してよい"
+        f"（既存記事は過去にソースに基づいて書かれたもの）。ただし引用の語数制限は新旧どちらにも適用する\n"
+        f"- 「情報源」には既存記事の情報源と新しいソースの両方を載せる\n\n"
+        f"【タイトル】\n"
+        f"- 60文字以内。選手名・クラブ名を含め、最新の状況を反映する。「【更新】」等の語は入れない\n"
+        f"- 移籍の確度はソースに合わせる（確定時のみ「合意」「獲得」、未確定なら「浮上」「交渉中」等）\n"
+        f"- 本人の発言をそのまま「」で引用して結論をタイトルに載せない。誰が何について語ったかまでに留める\n"
+        f"- 試合結果のスコアの数字（〇-〇）を書かない\n\n"
+        f"トピック（今回の続報）: {topic}\n\n"
+        f"{club_facts_text}"
+        f"--- 既存記事（タイトル: {existing_title}） ---\n{existing_markdown}\n--- 既存記事ここまで ---\n\n"
+        f"--- 新しいソース情報 ---\n{source_context}\n--- ここまで ---\n\n"
+        f"【情報源セクションの直後に以下を必ず追記すること】\n"
+        f"<!-- SEO\n"
+        f"seo_desc: ここに最新の状況と記事を読む価値が伝わる120文字以内の説明文\n"
+        f"-->"
+    )
+
+    http_client = httpx.Client(verify=_SSL_VERIFY) if not _SSL_VERIFY else None
+    client = anthropic.Anthropic(
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        http_client=http_client,
+    )
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=8000,
+        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user_message}],
+    )
+
+    content = response.content[0].text
+    # 判定理由を書いてから末尾に判定語を出すことがあるため、先頭一致ではなく含有で判定する
+    # （記事本文を書いた場合は冒頭に「# タイトル」があるので、それが無い応答のみ対象）
+    has_title_line = re.search(r"^# ", content, flags=re.MULTILINE) is not None
+    if "SKIP_DIFFERENT_STORY" in content and not has_title_line:
+        print(f"[synthesizer] 既存記事とは別の案件と判定 → 新規記事として扱う: topic='{topic}'")
+        return GeneratedArticle(title="", content="SKIP_DIFFERENT_STORY", sources=search_results)
+    if "SKIP_NO_NEW_FACTS" in content and not has_title_line:
+        print(f"[synthesizer] 続報に新事実なし → 更新しない: topic='{topic}'")
+        return GeneratedArticle(title="", content="SKIP_NO_NEW_FACTS", sources=search_results)
+
+    content = _remove_meta_comments(content)
+    content, meta_description = _extract_seo_meta(content)
+    content = _normalize_player_names(content)
+    title = _extract_title(content)
+
+    if title is None or "これまでの経緯" not in content or is_too_short(content, config, "synthesizer"):
+        print(f"[synthesizer] 更新記事のフォーマット不正/内容不足 → 更新しない: topic='{topic}'")
+        print(f"[synthesizer] AI応答冒頭: {content.strip().replace(chr(10), ' ')[:300]}")
+        return GeneratedArticle(title="", content="SKIP_LOW_QUALITY", sources=search_results)
+
+    for risk in check_title_ctr_risk(title):
+        print(f"[synthesizer] タイトル要確認（CTRリスク）: {risk} — title='{title}'")
+
+    print(f"[synthesizer] 更新記事生成完了: {title}")
+    print(f"[synthesizer] 使用トークン: input={response.usage.input_tokens}, output={response.usage.output_tokens}")
+    return GeneratedArticle(title=title, content=content, sources=search_results, meta_description=meta_description)
+
+
 def _normalize_player_names(text: str) -> str:
     """names.yaml の corrections 辞書で選手名を強制置換する"""
     names_path = os.path.join(os.path.dirname(__file__), "names.yaml")

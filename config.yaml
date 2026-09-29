@@ -205,6 +205,9 @@ article:
   min_body_chars: 1500
   # 同じ選手の記事をこの日数内は再度記事化しない（移籍話の連投防止）
   player_dedup_days: 7
+  # 同じ選手の記事がこの日数内にあれば、新規記事ではなく既存記事に続報を統合して更新する
+  # （公開済み記事も公開のまま更新。旧版はWordPressのリビジョンに残る）
+  update_window_days: 30
 wordpress:
   url: https://premier-blog.com
   status: draft

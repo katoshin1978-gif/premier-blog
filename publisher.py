@@ -809,6 +809,84 @@ def _build_related_html(
     return f'<div class="related-posts"><h3>関連記事</h3><ul>{items}</ul></div>'
 
 
+def _remove_div_blocks(html: str, marker: str) -> str:
+    """marker（例: '<div class="affiliate-block"'）で始まる div を入れ子を考慮して丸ごと除去する"""
+    import re
+    while True:
+        start = html.find(marker)
+        if start == -1:
+            return html
+        depth = 0
+        for m in re.finditer(r"<div\b|</div>", html[start:]):
+            depth += 1 if m.group() != "</div>" else -1
+            if depth == 0:
+                end = start + m.end()
+                break
+        else:
+            end = len(html)
+        html = html[:start] + html[end:]
+
+
+def fetch_post_for_update(post_id: int, config_path: str = "config.yaml") -> dict | None:
+    """更新用に既存記事を取得する。ゴミ箱・取得失敗時は None"""
+    config = load_config(config_path)
+    base_url = os.environ.get("WP_URL", config.get("wordpress", {}).get("url", "")).rstrip("/")
+    ip_base_url, host_header = _resolve_to_ip(base_url)
+    try:
+        resp = requests.get(
+            f"{ip_base_url}/wp-json/wp/v2/posts/{post_id}",
+            params={"context": "edit"},
+            headers={**_get_auth_header(), **host_header},
+            timeout=30,
+            verify=_SSL_VERIFY,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"[publisher] 既存記事の取得失敗 (ID={post_id}): {e}")
+        return None
+    if data.get("status") not in ("publish", "draft", "pending", "future"):
+        return None
+    return {
+        "id": data["id"],
+        "title": data["title"]["raw"],
+        "html": data["content"]["raw"],
+        "status": data["status"],
+        "date": data["date"][:10],
+        "categories": data.get("categories", []),
+        "link": data.get("link", ""),
+    }
+
+
+def html_to_markdown_for_update(html: str) -> tuple[str, list[tuple[str, str, str]]]:
+    """既存記事HTMLを更新生成用のMarkdownに戻す。
+    アフィリエイト・関連記事ブロックは除去し、記事内選手写真は再挿入用に抜き出して返す。"""
+    import html as _html
+    import re
+    html = _remove_div_blocks(html, '<div class="affiliate-block"')
+    html = _remove_div_blocks(html, '<div class="related-posts"')
+
+    player_images = []
+    for fig in re.findall(r"<figure\b.*?</figure>", html, flags=re.DOTALL):
+        m = re.search(r'<img src="([^"]+)" alt="([^"]*)".*?<span[^>]*>(.*?)</span>', fig, flags=re.DOTALL)
+        if m:
+            player_images.append((m.group(1), _html.unescape(m.group(2)), m.group(3)))
+    html = re.sub(r"<figure\b.*?</figure>", "", html, flags=re.DOTALL)
+
+    md = html
+    md = re.sub(r"<h2[^>]*>(.*?)</h2>", r"\n## \1\n", md, flags=re.DOTALL)
+    md = re.sub(r"<h3[^>]*>(.*?)</h3>", r"\n### \1\n", md, flags=re.DOTALL)
+    md = re.sub(r"<li[^>]*>(.*?)</li>", r"- \1\n", md, flags=re.DOTALL)
+    md = re.sub(r'<a [^>]*href="([^"]+)"[^>]*>(.*?)</a>', r"[\2](\1)", md, flags=re.DOTALL)
+    md = re.sub(r"</?strong>", "**", md)
+    md = re.sub(r"<hr\s*/?>", "\n---\n", md)
+    md = re.sub(r"</p>", "\n", md)
+    md = re.sub(r"<[^>]+>", "", md)
+    md = _html.unescape(md)
+    md = re.sub(r"\n{3,}", "\n\n", md).strip()
+    return md, player_images
+
+
 def publish_draft(
     title: str,
     content_markdown: str,
@@ -818,13 +896,18 @@ def publish_draft(
     category_ids: list[int] | None = None,
     category_id: int | None = None,  # 後方互換
     meta_description: str = "",
+    update_post_id: int | None = None,
 ) -> PublishResult:
+    """記事を下書き投稿する。update_post_id 指定時は既存記事を上書き更新する
+    （ステータス・カテゴリ・アイキャッチは既存のまま。旧版は WordPress のリビジョンに残る）"""
     config = load_config(config_path)
     wp_cfg = config.get("wordpress", {})
 
     base_url = os.environ.get("WP_URL", wp_cfg.get("url", "")).rstrip("/")
     ip_base_url, host_header = _resolve_to_ip(base_url)
     endpoint = f"{ip_base_url}/wp-json/wp/v2/posts"
+    if update_post_id:
+        endpoint = f"{endpoint}/{update_post_id}"
     status = wp_cfg.get("status", "draft")
 
     # category_ids 優先。未指定なら category_id（後方互換）→ config のデフォルト
@@ -847,11 +930,12 @@ def publish_draft(
     payload: dict = {
         "title": title,
         "content": content_html,
-        "status": status,
         "excerpt": meta_description,
     }
-    if category_ids:
-        payload["categories"] = category_ids
+    if not update_post_id:
+        payload["status"] = status
+        if category_ids:
+            payload["categories"] = category_ids
     if featured_media_id:
         payload["featured_media"] = featured_media_id
 
@@ -926,7 +1010,8 @@ def publish_draft(
             except Exception as e:
                 print(f"[publisher] 末尾挿入失敗（続行）: {e}")
 
-    print(f"[publisher] 投稿完了 (ID={result.post_id}, status={result.status}): {result.url}")
+    action = "更新" if update_post_id else "投稿"
+    print(f"[publisher] {action}完了 (ID={result.post_id}, status={result.status}): {result.url}")
     return result
 
 

@@ -23,12 +23,19 @@ from dotenv import load_dotenv
 
 from fetcher import fetch_articles
 from image_fetcher import fetch_image, fetch_player_images
-from publisher import publish_draft, upload_media, insert_player_images
+from publisher import (
+    fetch_post_for_update,
+    html_to_markdown_for_update,
+    insert_player_images,
+    publish_draft,
+    upload_media,
+)
 from researcher import search_articles
-from synthesizer import generate_article
+from synthesizer import generate_article, generate_update_article
 from topic_finder import (
     Topic,
     extract_player_name,
+    is_commentary_title,
     find_topics,
     find_topics_transfers,
     find_topics_europe,
@@ -170,6 +177,10 @@ def init_db(db_path: str = DB_PATH) -> sqlite3.Connection:
             UNIQUE(player_key, pipeline, created_date)
         )
     """)
+    # 既存記事の更新方式で使う記事IDの列（旧スキーマのDBには後から追加）
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(player_dedup)").fetchall()}
+    if "wp_post_id" not in cols:
+        conn.execute("ALTER TABLE player_dedup ADD COLUMN wp_post_id INTEGER")
     conn.commit()
     return conn
 
@@ -191,13 +202,56 @@ _TRANSFER_TOPIC_RE = re.compile(
 )
 
 
-def mark_player_processed(conn: sqlite3.Connection, player_key: str, pipeline: str) -> None:
+def mark_player_processed(
+    conn: sqlite3.Connection, player_key: str, pipeline: str, post_id: int | None = None
+) -> None:
     today = datetime.now().strftime('%Y-%m-%d')
     conn.execute(
-        "INSERT OR IGNORE INTO player_dedup (player_key, pipeline, created_date) VALUES (?, ?, ?)",
-        (player_key, pipeline, today),
+        "INSERT OR IGNORE INTO player_dedup (player_key, pipeline, created_date, wp_post_id) VALUES (?, ?, ?, ?)",
+        (player_key, pipeline, today, post_id),
     )
+    if post_id:
+        conn.execute(
+            "UPDATE player_dedup SET wp_post_id=? WHERE player_key=? AND pipeline=? AND created_date=?",
+            (post_id, player_key, pipeline, today),
+        )
     conn.commit()
+
+
+def find_recent_player_post(conn: sqlite3.Connection, player_key: str, days: int) -> int | None:
+    """直近 days 日以内に同じ選手で書いた記事のIDを返す（更新方式の対象）"""
+    cutoff = (datetime.now() - timedelta(days=days - 1)).strftime('%Y-%m-%d')
+    row = conn.execute(
+        "SELECT wp_post_id FROM player_dedup WHERE player_key=? AND created_date>=? AND wp_post_id>0 "
+        "ORDER BY created_date DESC, id DESC LIMIT 1",
+        (player_key, cutoff),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def topic_player_key(title: str, require_transfer: bool = False) -> str | None:
+    """選手単位の重複判定・記事更新に使うキー。コメント記事は別の話題になりやすいため対象外"""
+    if is_commentary_title(title):
+        return None
+    if require_transfer and not _TRANSFER_TOPIC_RE.search(title):
+        return None
+    return extract_player_name(title)
+
+
+def decide_player_action(conn: sqlite3.Connection, player_key: str | None, cfg: dict) -> tuple[str, int | None]:
+    """同じ選手の記事がある場合の扱いを決める。
+    ("update", 記事ID): 直近 update_window_days 日以内の既存記事を続報で更新
+    ("skip", None):     記事IDの記録がない直近 player_dedup_days 日以内の重複
+    ("new", None):      新規記事"""
+    if not player_key:
+        return "new", None
+    art_cfg = cfg.get("article", {})
+    post_id = find_recent_player_post(conn, player_key, art_cfg.get("update_window_days", 30))
+    if post_id:
+        return "update", post_id
+    if is_player_processed_recently(conn, player_key, art_cfg.get("player_dedup_days", 7)):
+        return "skip", None
+    return "new", None
 
 
 def get_analyzed_match_ids(conn: sqlite3.Connection) -> set[int]:
@@ -321,26 +375,36 @@ def _post_article(
     cfg: dict,
     force_category: str | None = None,
     context: str = "default",
-) -> bool:
-    """1記事を生成・投稿する。成功したら True を返す"""
+    update_post_id: int | None = None,
+) -> int | None:
+    """1記事を生成・投稿する。成功したら記事ID（dry-run は 0）、失敗・スキップは None を返す。
+    update_post_id 指定時は既存記事に続報を統合して上書き更新する"""
+    existing = fetch_post_for_update(update_post_id, CONFIG_PATH) if update_post_id else None
+    if update_post_id and existing is None:
+        print(f"[main] 更新対象の記事が取得できないため新規記事として生成 (ID={update_post_id})")
+    if existing:
+        updated = _update_article(topic, articles, search_results, dry_run, conn, existing)
+        if updated != _FALLBACK_TO_NEW:
+            return updated
+
     generated = generate_article(topic.title, articles, search_results, CONFIG_PATH, context=context)
 
     if generated.content.strip() == "SKIP_OLD_NEWS":
         print(f"[main] 古いニュースのためスキップ: {topic.title}")
         mark_processed(conn, topic, 0, "")  # 再選択されないよう記録
-        return False
+        return None
 
     if generated.content.strip() == "SKIP_LOW_QUALITY":
         print(f"[main] 生成品質不足のためスキップ（投稿しない）: {topic.title}")
         mark_processed(conn, topic, 0, "")  # 再選択されないよう記録
-        return False
+        return None
 
     if dry_run:
         print("\n[main] DRY RUN モード - WordPress には投稿しません")
         print("-" * 60)
         print(generated.content[:800])
         print("-" * 60)
-        return True
+        return 0
 
     # アイキャッチ画像取得・アップロード
     # 英語トピック + ソース記事タイトルを結合して選手名抽出精度を向上
@@ -393,7 +457,12 @@ def _post_article(
     print(f"[main] 投稿完了: Post ID={result.post_id}")
     print(f"[main] URL: {result.url}")
 
-    # Bing IndexNowでインデックス促進（draftはURLが404を返すため送信対象外）
+    _send_indexnow(result)
+    return result.post_id
+
+
+def _send_indexnow(result) -> None:
+    """Bing IndexNowでインデックス促進（draftはURLが404を返すため送信対象外）"""
     indexnow_key = os.environ.get("BING_INDEXNOW_KEY", "")
     if indexnow_key and result.url and result.status == "publish":
         try:
@@ -408,7 +477,52 @@ def _post_article(
         except Exception as e:
             print(f"[main] IndexNow送信失敗（続行）: {e}")
 
-    return True
+
+# _update_article が「既存記事とは別の案件」と判定した時の戻り値（新規記事の生成に回す）
+_FALLBACK_TO_NEW = -1
+
+
+def _update_article(
+    topic: Topic,
+    articles: list,
+    search_results: list,
+    dry_run: bool,
+    conn: sqlite3.Connection,
+    existing: dict,
+) -> int | None:
+    """既存記事に続報を統合して上書き更新する。公開済み記事も公開のまま更新する
+    （旧版は WordPress のリビジョンに残るため管理画面から戻せる）"""
+    print(f"[main] 既存記事を続報で更新: ID={existing['id']} ({existing['status']}) {existing['title']}")
+    existing_md, player_images = html_to_markdown_for_update(existing["html"])
+    generated = generate_update_article(
+        topic.title, existing["title"], existing_md, existing["date"],
+        articles, search_results, CONFIG_PATH,
+    )
+    if generated.content == "SKIP_DIFFERENT_STORY":
+        return _FALLBACK_TO_NEW
+    if generated.content in ("SKIP_NO_NEW_FACTS", "SKIP_LOW_QUALITY"):
+        mark_processed(conn, topic, 0, "")  # 再選択されないよう記録
+        return None
+
+    if dry_run:
+        print("\n[main] DRY RUN モード - 既存記事は更新しません")
+        print("-" * 60)
+        print(generated.content[:1500])
+        print("-" * 60)
+        return 0
+
+    result = publish_draft(
+        generated.title, generated.content, CONFIG_PATH,
+        inline_player_images=player_images or None,
+        category_ids=existing["categories"],
+        meta_description=generated.meta_description,
+        update_post_id=existing["id"],
+    )
+    mark_processed(conn, topic, result.post_id, result.url)
+    print(f"[main] 更新完了: Post ID={result.post_id} ({result.status})")
+    print(f"[main] URL: {result.url}")
+    _send_indexnow(result)
+    return result.post_id
 
 
 def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1) -> None:
@@ -461,13 +575,29 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
 
     def _main_player_key(t: Topic) -> str | None:
         # 移籍系トピックのみ選手単位で重複判定する（試合・監督コメント等は対象外）
-        return extract_player_name(t.title) if _TRANSFER_TOPIC_RE.search(t.title) else None
+        return topic_player_key(t.title, require_transfer=True)
+
+    # 同じ実行内で既に更新した記事は再更新しない
+    updated_ids: set[int] = set()
+
+    def _player_action(key: str | None) -> tuple[str, int | None]:
+        action, pid = decide_player_action(conn, key, cfg)
+        if action == "update" and pid in updated_ids:
+            return "skip", None
+        return action, pid
+
+    def _record_player(key: str | None, pipeline: str, action: str, post_id: int) -> None:
+        if not key:
+            return
+        mark_player_processed(conn, key, pipeline, post_id or None)
+        if action == "update" and post_id:
+            updated_ids.add(post_id)
 
     if not topic_override:
         filtered = []
         for t in candidate_topics:
             key = _main_player_key(t)
-            if key and is_player_processed_recently(conn, key, dedup_days):
+            if _player_action(key)[0] == "skip":
                 print(f"[main] 選手重複スキップ（直近{dedup_days}日に記事化済み）: {key} — {t.title}")
                 continue
             filtered.append(t)
@@ -479,11 +609,11 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             print(f"[main] 記事 {i + 1}/{count} 開始")
             print("=" * 60)
 
-        # 今回のループで使用済みのトピックを除外（同じ実行内で記事化した選手も除外）
+        # 今回のループで使用済みのトピックを除外（同じ実行内で記事化・更新した選手も除外）
         remaining = [
             t for t in candidate_topics
             if topic_hash(t) not in used_hashes
-            and not ((k := _main_player_key(t)) and is_player_processed_recently(conn, k, dedup_days))
+            and _player_action(_main_player_key(t))[0] != "skip"
         ]
         if not remaining:
             print(f"[main] 残りトピックなし。{success_count}/{count} 記事生成済み")
@@ -498,14 +628,15 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
         used_hashes.add(topic_hash(topic))
         used_urls.update(r.url for r in search_results)
         print(f"[main] 採用トピック: {topic.title}")
+        main_key = _main_player_key(topic)
+        action, target_id = _player_action(main_key)
 
         try:
-            ok = _post_article(topic, articles, search_results, dry_run, conn, cfg)
-            if ok:
+            post_id = _post_article(topic, articles, search_results, dry_run, conn, cfg, update_post_id=target_id)
+            if post_id is not None:
                 success_count += 1
-                main_key = _main_player_key(topic)
-                if main_key and not dry_run:
-                    mark_player_processed(conn, main_key, "main")
+                if not dry_run:
+                    _record_player(main_key, "main", action, post_id)
         except Exception as e:
             print(f"[main] 記事生成・投稿エラー: {e}")
             # エラーがあっても次のトピックへ進む
@@ -536,19 +667,22 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             used_hashes.add(topic_hash(topic))
             used_urls.update(r.url for r in search_results)
 
-            # 直近に同じ選手の記事がすでにあればスキップ（パイプライン横断）
-            player_key = extract_player_name(topic.title)
-            if player_key and is_player_processed_recently(conn, player_key, dedup_days):
+            # 直近に同じ選手の記事があれば既存記事を更新、記事IDが無ければスキップ（パイプライン横断）
+            player_key = topic_player_key(topic.title)
+            action, target_id = _player_action(player_key)
+            if action == "skip":
                 print(f"[main] 移籍: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] 移籍採用トピック: {topic.title}")
             try:
-                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category="transfers")
-                if ok:
+                post_id = _post_article(
+                    topic, articles, search_results, dry_run, conn, cfg,
+                    force_category="transfers", update_post_id=target_id,
+                )
+                if post_id is not None:
                     transfer_success += 1
-                    if player_key:
-                        mark_player_processed(conn, player_key, "transfers")
+                    _record_player(player_key, "transfers", action, post_id)
             except Exception as e:
                 print(f"[main] 移籍記事エラー: {e}")
         print(f"[main] 移籍記事完了: {transfer_success}/{count_transfers} 件")
@@ -574,19 +708,22 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             used_hashes.add(topic_hash(topic))
             used_urls.update(r.url for r in search_results)
 
-            # パイプライン横断で直近の同選手スキップ
-            player_key = extract_player_name(topic.title)
-            if player_key and is_player_processed_recently(conn, player_key, dedup_days):
+            # パイプライン横断で直近の同選手は既存記事を更新、記事IDが無ければスキップ
+            player_key = topic_player_key(topic.title)
+            action, target_id = _player_action(player_key)
+            if action == "skip":
                 print(f"[main] 欧州: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] 欧州採用トピック: {topic.title}")
             try:
-                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category="europe")
-                if ok and player_key:
-                    mark_player_processed(conn, player_key, "europe")
-                if ok:
+                post_id = _post_article(
+                    topic, articles, search_results, dry_run, conn, cfg,
+                    force_category="europe", update_post_id=target_id,
+                )
+                if post_id is not None:
                     europe_success += 1
+                    _record_player(player_key, "europe", action, post_id)
             except Exception as e:
                 print(f"[main] 欧州記事エラー: {e}")
         print(f"[main] 欧州記事完了: {europe_success}/{count_europe} 件")
@@ -615,18 +752,21 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
                 break
             used_hashes.add(topic_hash(topic))
 
-            player_key = extract_player_name(topic.title)
-            if player_key and is_player_processed_recently(conn, player_key, dedup_days):
+            player_key = topic_player_key(topic.title)
+            action, target_id = _player_action(player_key)
+            if action == "skip":
                 print(f"[main] WC: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] WC採用トピック: {topic.title}")
             try:
-                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category="united")
-                if ok and player_key:
-                    mark_player_processed(conn, player_key, "worldcup")
-                if ok:
+                post_id = _post_article(
+                    topic, articles, search_results, dry_run, conn, cfg,
+                    force_category="united", update_post_id=target_id,
+                )
+                if post_id is not None:
                     wc_success += 1
+                    _record_player(player_key, "worldcup", action, post_id)
             except Exception as e:
                 print(f"[main] WC記事エラー: {e}")
         print(f"[main] WC記事完了: {wc_success}/{count_wc} 件")
@@ -654,8 +794,8 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
 
             print(f"[main] ロングテール採用クエリ: {topic.title} (カテゴリ: {topic.category})")
             try:
-                ok = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category=topic.category, context="longtail")
-                if ok:
+                post_id = _post_article(topic, articles, search_results, dry_run, conn, cfg, force_category=topic.category, context="longtail")
+                if post_id is not None:
                     longtail_success += 1
             except Exception as e:
                 print(f"[main] ロングテール記事エラー: {e}")
