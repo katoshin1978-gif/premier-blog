@@ -37,6 +37,26 @@ def load_config(config_path: str = "config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
+def count_body_chars(content: str) -> int:
+    """情報源セクション・URL・Markdown記号・空白を除いた本文の文字数を返す"""
+    body = content.split("**情報源**")[0]
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+    body = re.sub(r"\]\([^)]*\)", "]", body)
+    body = re.sub(r"https?://\S+", "", body)
+    body = re.sub(r"[#*_>\-\[\]|`]", "", body)
+    return len(re.sub(r"\s+", "", body))
+
+
+def is_too_short(content: str, cfg: dict, label: str) -> bool:
+    """本文が config の article.min_body_chars 未満なら True（ログも出す）"""
+    min_chars = cfg.get("article", {}).get("min_body_chars", 1500)
+    chars = count_body_chars(content)
+    if chars < min_chars:
+        print(f"[{label}] 本文が短すぎるためスキップ（{chars}字 < {min_chars}字）")
+        return True
+    return False
+
+
 def truncate_to_words(text: str, max_words: int) -> str:
     words = text.split()
     if len(words) <= max_words:
@@ -484,6 +504,9 @@ def generate_article(
         if list_marker_count < 3:
             print(f"[synthesizer] ロングテール記事に一覧構造が無いためスキップ: topic='{topic}' (list_markers={list_marker_count})")
             return GeneratedArticle(title="", content="SKIP_LOW_QUALITY", sources=search_results)
+
+    if is_too_short(content, config, "synthesizer"):
+        return GeneratedArticle(title="", content="SKIP_LOW_QUALITY", sources=search_results)
 
     for risk in check_title_ctr_risk(title):
         print(f"[synthesizer] タイトル要確認（CTRリスク）: {risk} — title='{title}'")

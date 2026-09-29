@@ -201,6 +201,10 @@ article:
   language: ja
   min_sources: 2
   max_sources: 8
+  # 本文（情報源・記号・URLを除く）がこの文字数未満なら投稿しない（AdSense「有用性の低いコンテンツ」対策）
+  min_body_chars: 1500
+  # 同じ選手の記事をこの日数内は再度記事化しない（移籍話の連投防止）
+  player_dedup_days: 7
 wordpress:
   url: https://premier-blog.com
   status: draft

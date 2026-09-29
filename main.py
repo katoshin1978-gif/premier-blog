@@ -174,19 +174,21 @@ def init_db(db_path: str = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
-def is_player_processed_today(conn: sqlite3.Connection, player_key: str, pipeline: str | None = None) -> bool:
-    today = datetime.now().strftime('%Y-%m-%d')
-    if pipeline:
-        row = conn.execute(
-            "SELECT id FROM player_dedup WHERE player_key=? AND pipeline=? AND created_date=?",
-            (player_key, pipeline, today),
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT id FROM player_dedup WHERE player_key=? AND created_date=?",
-            (player_key, today),
-        ).fetchone()
+def is_player_processed_recently(conn: sqlite3.Connection, player_key: str, days: int) -> bool:
+    """同じ選手の記事を直近 days 日以内（当日含む）に投稿済みなら True。パイプライン横断で判定する"""
+    cutoff = (datetime.now() - timedelta(days=days - 1)).strftime('%Y-%m-%d')
+    row = conn.execute(
+        "SELECT id FROM player_dedup WHERE player_key=? AND created_date>=?",
+        (player_key, cutoff),
+    ).fetchone()
     return row is not None
+
+
+# 移籍系トピック判定（メインパイプラインで選手重複チェックをかける対象）
+_TRANSFER_TOPIC_RE = re.compile(
+    r"\b(transfer|bid|deal|sign|signing|fee|offer|target|loan|contract|agree|agreed|talks|move|swoop|interest)\b",
+    re.IGNORECASE,
+)
 
 
 def mark_player_processed(conn: sqlite3.Connection, player_key: str, pipeline: str) -> None:
@@ -455,6 +457,21 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
     used_hashes: set[str] = set()
     used_urls: set[str] = set()
     success_count = 0
+    dedup_days = cfg.get("article", {}).get("player_dedup_days", 7)
+
+    def _main_player_key(t: Topic) -> str | None:
+        # 移籍系トピックのみ選手単位で重複判定する（試合・監督コメント等は対象外）
+        return extract_player_name(t.title) if _TRANSFER_TOPIC_RE.search(t.title) else None
+
+    if not topic_override:
+        filtered = []
+        for t in candidate_topics:
+            key = _main_player_key(t)
+            if key and is_player_processed_recently(conn, key, dedup_days):
+                print(f"[main] 選手重複スキップ（直近{dedup_days}日に記事化済み）: {key} — {t.title}")
+                continue
+            filtered.append(t)
+        candidate_topics = filtered
 
     for i in range(count):
         if i > 0:
@@ -462,8 +479,12 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             print(f"[main] 記事 {i + 1}/{count} 開始")
             print("=" * 60)
 
-        # 今回のループで使用済みのトピックを除外
-        remaining = [t for t in candidate_topics if topic_hash(t) not in used_hashes]
+        # 今回のループで使用済みのトピックを除外（同じ実行内で記事化した選手も除外）
+        remaining = [
+            t for t in candidate_topics
+            if topic_hash(t) not in used_hashes
+            and not ((k := _main_player_key(t)) and is_player_processed_recently(conn, k, dedup_days))
+        ]
         if not remaining:
             print(f"[main] 残りトピックなし。{success_count}/{count} 記事生成済み")
             break
@@ -482,6 +503,9 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             ok = _post_article(topic, articles, search_results, dry_run, conn, cfg)
             if ok:
                 success_count += 1
+                main_key = _main_player_key(topic)
+                if main_key and not dry_run:
+                    mark_player_processed(conn, main_key, "main")
         except Exception as e:
             print(f"[main] 記事生成・投稿エラー: {e}")
             # エラーがあっても次のトピックへ進む
@@ -512,10 +536,10 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             used_hashes.add(topic_hash(topic))
             used_urls.update(r.url for r in search_results)
 
-            # 同日に同じ選手の移籍記事がすでにあればスキップ
+            # 直近に同じ選手の記事がすでにあればスキップ（パイプライン横断）
             player_key = extract_player_name(topic.title)
-            if player_key and is_player_processed_today(conn, player_key, "transfers"):
-                print(f"[main] 移籍: 選手重複スキップ ({player_key})")
+            if player_key and is_player_processed_recently(conn, player_key, dedup_days):
+                print(f"[main] 移籍: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] 移籍採用トピック: {topic.title}")
@@ -550,10 +574,10 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             used_hashes.add(topic_hash(topic))
             used_urls.update(r.url for r in search_results)
 
-            # パイプライン横断で同日同選手スキップ
+            # パイプライン横断で直近の同選手スキップ
             player_key = extract_player_name(topic.title)
-            if player_key and is_player_processed_today(conn, player_key):
-                print(f"[main] 欧州: 選手重複スキップ ({player_key})")
+            if player_key and is_player_processed_recently(conn, player_key, dedup_days):
+                print(f"[main] 欧州: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] 欧州採用トピック: {topic.title}")
@@ -592,8 +616,8 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             used_hashes.add(topic_hash(topic))
 
             player_key = extract_player_name(topic.title)
-            if player_key and is_player_processed_today(conn, player_key):
-                print(f"[main] WC: 選手重複スキップ ({player_key})")
+            if player_key and is_player_processed_recently(conn, player_key, dedup_days):
+                print(f"[main] WC: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] WC採用トピック: {topic.title}")

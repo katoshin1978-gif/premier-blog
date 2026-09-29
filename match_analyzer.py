@@ -22,6 +22,7 @@ from synthesizer import (
     _extract_title,
     build_club_facts_text,
     check_title_ctr_risk,
+    is_too_short,
 )
 
 load_dotenv()
@@ -212,6 +213,10 @@ ANALYSIS_SYSTEM_PROMPT = """あなたはプレミアリーグ専門の日本語�
 - 主要選手のパフォーマンスを具体的に評価する
 - この結果がリーグ順位・残り試合に与える影響を考察する
 
+【文字数の目標】
+- 記事全体：2000〜3500文字（情報源を除く）
+- 「戦術分析」は両チーム合わせて600文字以上。ソースの事実を根拠に、なぜその展開になったかを掘り下げる
+
 【出力フォーマット（厳守）】
 ```
 # {クラブ名} {スコア} {クラブ名} 戦術分析｜{節数と簡潔な見どころ}
@@ -341,6 +346,9 @@ def generate_analysis_article(
         print(f"[match_analyzer] AI応答冒頭: {preview}")
         return None
 
+    if is_too_short(content, cfg, "match_analyzer"):
+        return None
+
     for risk in check_title_ctr_risk(title):
         print(f"[match_analyzer] タイトル要確認（CTRリスク）: {risk} — title='{title}'")
 
@@ -370,6 +378,11 @@ PREVIEW_SYSTEM_PROMPT = """あなたはプレミアリーグ専門の日本語�
 - 過去の対戦成績・因縁があれば触れる
 - 予想される戦術的な見どころ・キーとなる対決を分析する
 - 勝敗予想は断定せず、注目ポイントとして提示する
+
+【文字数の目標】
+- 記事全体：1800〜3000文字（情報源を除く）
+- 「試合の見どころ」は500文字以上。キーマッチアップごとに、ソースの事実を根拠に理由を説明する
+- ソースに情報がない項目を水増しで埋めない。その分は「試合の見どころ」を深掘りして補う
 
 【出力フォーマット（厳守）】
 ```
@@ -483,6 +496,9 @@ def generate_preview_article(
         preview = content.strip().replace("\n", " ")[:200]
         print(f"[match_analyzer] プレビュー記事生成失敗と判定（フォーマット不正/内容不足）→ スキップ")
         print(f"[match_analyzer] AI応答冒頭: {preview}")
+        return None
+
+    if is_too_short(content, cfg, "match_analyzer"):
         return None
 
     print(f"[match_analyzer] プレビュー記事生成完了: {title}")

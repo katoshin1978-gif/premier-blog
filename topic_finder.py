@@ -134,6 +134,16 @@ _NON_NAME_WORDS = {
     "league", "here", "we", "go", "el", "fc", "ac", "the", "and", "vs",
     "manchester", "atletico", "sevilla", "porto", "roma", "napoli",
     "leipzig", "paris", "saint", "germain",
+    # プレミア勢のクラブ名・略称・愛称（メインパイプラインの選手重複判定で誤抽出しないため）
+    "utd", "uniteds", "citys", "spurs", "newcastle", "aston", "villa", "west", "ham",
+    "brighton", "brentford", "fulham", "wolves", "forest", "nottingham", "crystal",
+    "palace", "bournemouth", "leeds", "sunderland", "burnley", "ipswich", "leicester",
+    "red", "devils", "gunners", "blues", "reds", "magpies", "exclusive", "breaking", "official",
+    "hotspur", "hove", "albion", "galatasaray", "bundesliga", "laliga", "serie",
+    # 見出しの定型語（選手名ではない）
+    "transfer", "transfers", "latest", "new", "news", "rumours", "rumors", "market", "soccer",
+    "papers", "report", "reports", "live", "as", "rt", "not", "club", "saudi", "just",
+    "chelseas", "arsenals", "liverpools", "tottenhams",
     # 国籍形容詞・年代カテゴリ等（選手名の前に付く記述語で、名前本体ではない）
     "english", "scottish", "welsh", "irish", "french", "german", "italian",
     "spanish", "portuguese", "dutch", "belgian", "brazilian", "argentine",
