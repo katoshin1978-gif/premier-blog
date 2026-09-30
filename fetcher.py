@@ -84,6 +84,24 @@ def _fetch_with_browser(url: str) -> FetchedArticle | None:
         return None
 
 
+def _strip_preamble(content: str, title: str) -> str:
+    """記事タイトルと一致するH1見出しより前（クッキー同意文・ナビゲーション等）を除去する。
+    Mundo Deportivo 等は本文の前に数千語の定型文があり、synthesizer の語数上限で
+    切り詰めると本文がほぼ残らず SKIP_OLD_NEWS 誤判定の原因になっていた。"""
+    if not title:
+        return content
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        if not line.startswith("# "):
+            continue
+        heading = line[2:].strip()
+        # Jina の Title は「記事名 | サイト名」形式のことがあるため前方一致も許容
+        if len(heading) >= 15 and (heading == title or title.startswith(heading)):
+            stripped = "\n".join(lines[i:]).strip()
+            return stripped if len(stripped) >= 100 else content
+    return content
+
+
 def fetch_article(url: str) -> FetchedArticle | None:
     jina_url = JINA_BASE + url
     headers = {
@@ -114,7 +132,7 @@ def fetch_article(url: str) -> FetchedArticle | None:
             if not content_lines:
                 content_lines = lines
 
-            content = "\n".join(content_lines).strip()
+            content = _strip_preamble("\n".join(content_lines).strip(), title)
 
             if len(content) < 100:
                 print(f"[fetcher] コンテンツが短すぎます: {url}")

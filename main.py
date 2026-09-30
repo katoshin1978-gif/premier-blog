@@ -30,7 +30,7 @@ from publisher import (
     publish_draft,
     upload_media,
 )
-from researcher import search_articles
+from researcher import SearchResult, _is_article_url, is_whitelisted, search_articles
 from synthesizer import generate_article, generate_update_article
 from topic_finder import (
     Topic,
@@ -321,6 +321,27 @@ def mark_processed(conn: sqlite3.Connection, topic: Topic, post_id: int, post_ur
     conn.commit()
 
 
+def _with_topic_source(topic: Topic, results: list) -> list:
+    """トピック元記事（RSSのリンク）がホワイトリスト内なら主要ソースとして先頭に加える。
+    非英語トピック（西語RSS等）は翻訳検索だと無関係な記事しか拾えず、
+    AIが SKIP_OLD_NEWS を返して全滅していたため、元記事を必ずソースに含める。"""
+    if not topic.url or any(r.url == topic.url for r in results):
+        return results
+    with open(CONFIG_PATH, encoding="utf-8") as f:
+        whitelist = yaml.safe_load(f)["sources"]["whitelist"]
+    if not is_whitelisted(topic.url, whitelist) or not _is_article_url(topic.url):
+        return results
+    print(f"[main] トピック元記事をソースに追加: {topic.url}")
+    source = SearchResult(
+        title=topic.title,
+        url=topic.url,
+        snippet="",
+        score=1.0,
+        published_date=topic.published_date,
+    )
+    return [source] + results
+
+
 def _find_valid_topic(
     candidate_topics: list[Topic],
     context: str = "default",
@@ -331,6 +352,7 @@ def _find_valid_topic(
         print(f"[main] トピック試行: {candidate.title}")
 
         _results = search_articles(candidate.title, CONFIG_PATH, context=context)
+        _results = _with_topic_source(candidate, _results)
         if len(_results) < MIN_ARTICLES:
             print(f"[main] 検索結果不足 ({len(_results)} 件)、次のトピックへ")
             continue

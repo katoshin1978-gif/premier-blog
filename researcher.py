@@ -126,12 +126,25 @@ _EN_STOPWORDS = {
 }
 
 
+# 西・伊・仏・独語の頻出機能語（英語と綴りが重なる "a" "in" 等は除外）
+_FOREIGN_STOPWORDS = {
+    "el", "la", "los", "las", "del", "que", "con", "por", "para", "una", "y", "se", "su", "al",
+    "il", "lo", "gli", "di", "della", "che", "per", "e", "non", "nel", "alla",
+    "le", "les", "du", "des", "et", "est", "pour", "sur", "au", "aux", "une", "dans",
+    "der", "die", "das", "und", "mit", "nicht", "den", "ist", "von", "zu", "bei", "gegen", "im", "nach", "auf",
+    "de", "un", "en", "es",
+}
+
+
 def _looks_non_english(text: str) -> bool:
-    """英語ストップワードを含まないラテン文字テキストを非英語（伊・西・仏語等）と推定する"""
-    words = re.findall(r"[a-zA-Z']+", text.lower())
-    if len(words) < 5:
+    """ラテン文字テキストが非英語（伊・西・仏・独語等）かを機能語の出現数で推定する"""
+    words = re.findall(r"[a-zA-ZÀ-ÿ']+", text.lower())
+    if len(words) < 4:
         return False
-    return not any(w in _EN_STOPWORDS for w in words)
+    # 英語見出しにも "De Jong" "Atlético de Madrid" 等で1語は混ざるため2語以上を要求
+    foreign = sum(1 for w in words if w in _FOREIGN_STOPWORDS)
+    english = sum(1 for w in words if w in _EN_STOPWORDS and w != "a")
+    return foreign >= 2 and foreign > english
 
 
 def _translate_to_english_query(topic: str, context: str = "default") -> str:
@@ -166,7 +179,8 @@ def _translate_to_english_query(topic: str, context: str = "default") -> str:
                 "content": instruction,
             }],
         )
-        query = resp.content[0].text.strip()
+        # Haikuが「# クエリ」のようにMarkdown見出し記号や引用符を付けることがあるため除去
+        query = resp.content[0].text.strip().splitlines()[0].strip().lstrip("#").strip().strip('"\'')
         print(f"[researcher] 非英語トピック翻訳: '{topic[:40]}' → '{query}'")
         return query
     except Exception as e:

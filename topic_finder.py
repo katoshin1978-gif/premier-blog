@@ -309,6 +309,7 @@ class Topic:
     url: str | None = None
     score: int = 0
     category: str | None = None
+    published_date: str = ""  # RSSの公開日（YYYY-MM-DD）。不明なら空文字
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -370,7 +371,10 @@ def get_rss_topics(
             if man_united_boost > 1.0 and _is_man_united_related(title):
                 score = int(score * man_united_boost)
 
-            topics.append(Topic(title=title, url=url, score=score))
+            published = entry.get("published_parsed")
+            published_date = datetime(*published[:3]).strftime("%Y-%m-%d") if published else ""
+
+            topics.append(Topic(title=title, url=url, score=score, published_date=published_date))
 
     topics.sort(key=lambda t: t.score, reverse=True)
     print(f"[topic_finder] RSS: {len(topics)} 件の最新記事を取得")
