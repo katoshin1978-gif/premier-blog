@@ -556,15 +556,6 @@ def _raise_if_credit_error(e: Exception) -> None:
         raise CreditExhaustedError(str(e)) from e
 
 
-ALERT_FILE = "alert.txt"
-
-
-def _write_alert(message: str) -> None:
-    """CI のメール通知本文用に異常内容を書き出す"""
-    with open(ALERT_FILE, "w", encoding="utf-8") as f:
-        f.write(message + "\n")
-
-
 def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1) -> int:
     """全パイプラインの投稿・更新件数を返す"""
     print("=" * 60)
@@ -939,20 +930,17 @@ def main() -> None:
     except CreditExhaustedError as e:
         msg = f"Anthropic API のクレジット残高不足で記事生成を中断した。\nConsole の Plans & Billing でチャージが必要。\n\n{e}"
         print(f"[main] {msg}")
-        _write_alert(msg)
         sys.exit(1)
     except KeyboardInterrupt:
         print("\n[main] 中断されました")
         sys.exit(0)
     except Exception as e:
         print(f"[main] エラー: {e}")
-        _write_alert(f"main.py が例外で異常終了した。\n\n{e}")
         raise
 
     if total == 0 and not args.dry_run:
         msg = "全パイプラインで投稿・更新が0件だった。ログで原因を確認すること。"
         print(f"[main] {msg}")
-        _write_alert(msg)
         sys.exit(1)
 
 
