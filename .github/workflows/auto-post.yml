@@ -58,10 +58,40 @@ jobs:
       - name: main.py 実行
         run: python main.py
 
+      # main.py が失敗（残高不足・0件）しても重複防止DBは保存する
       - name: processed.db をコミット
+        if: always()
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git add processed.db
           git diff --staged --quiet || git commit -m "chore: update processed.db [skip ci]"
           git push
+
+      # 失敗時に Gmail SMTP で通知（宛先・送信元は Secrets で管理）
+      - name: 失敗通知メール
+        if: failure()
+        run: |
+          {
+            echo "Premier Blog 自動投稿が失敗した。"
+            echo
+            cat alert.txt 2>/dev/null || echo "main.py 以外のステップで失敗。ログを確認すること。"
+            echo
+            echo "ログ: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > mail_body.txt
+          python - <<'EOF'
+          import os, smtplib
+          from email.mime.text import MIMEText
+          msg = MIMEText(open("mail_body.txt", encoding="utf-8").read(), "plain", "utf-8")
+          msg["Subject"] = "【Premier Blog】自動投稿エラー"
+          msg["From"] = os.environ["MAIL_USERNAME"]
+          msg["To"] = os.environ["MAIL_TO"]
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+              s.login(os.environ["MAIL_USERNAME"], os.environ["MAIL_PASSWORD"])
+              s.send_message(msg)
+          print("通知メール送信完了")
+          EOF
+        env:
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
