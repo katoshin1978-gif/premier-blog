@@ -110,6 +110,8 @@ INJURY_SYSTEM_PROMPT = """あなたはプレミアリーグ専門の日本語ス
   試合・負傷・会見の日付として書かない。試合や出来事の日付は、ソース本文に日付が明記されている場合だけ書く
 - ソース同士で情報が食い違う場合は、「Published:」の日付が新しいソースを優先する。
   直近の試合でベンチ入り・出場した記録がある選手は、それより古い「離脱中」の報道があっても「復帰した選手」に入れる
+- 復帰した選手について「まだ実戦に出ていない」「次節から実戦復帰の可能性」のように、出場していないと決めつける書き方は、
+  ソースがそう明言している場合だけ使う。ソースで確認できた最新の出場・ベンチ入りの記録だけを書く
 - 掲載するのは負傷・病気・出場停止だけ。スタメン落ち・ベンチ外し・構想外など、起用上の理由による不出場は載せない
 - 「はじめに」は負傷・復帰の話だけに絞る。戦績・監督の進退など、怪我と関係のない話は書かない
 - 記事中でのソース引用は1ソースあたり最大100語（英語換算）まで。残りは自分の言葉で要約・言い換えする
@@ -240,6 +242,52 @@ def _collect_sources(club: dict, config_path: str, context: str) -> tuple[list, 
     return results, articles
 
 
+def _fix_returned_players(
+    client: anthropic.Anthropic, k: dict, user_message: str, content: str, source_context: str, club_name: str,
+) -> str:
+    """「負傷・離脱中」に載せた選手のうち、ソースに出場・ベンチ入りの記録がある選手を洗い出し、
+    いれば「復帰した選手」に移して書き直させる（復帰済みの選手を負傷中と書く誤りの防止）"""
+    m = re.search(r"## 負傷・離脱中の選手\n(.*?)(?=\n## )", content, flags=re.DOTALL)
+    if not m:
+        return content
+    check = client.messages.create(
+        model=MODEL,
+        max_tokens=1500,
+        messages=[{"role": "user", "content": (
+            "次の「負傷・離脱中の選手」に載っている選手のうち、負傷・離脱が報じられた後の試合で出場した、"
+            "またはベンチ入りした（starting line-up / XI / subs / substitutes / came on 等）とソースに書かれている選手を挙げてください。\n"
+            "負傷する前の試合や、その試合で負傷した試合での出場は挙げない（例：トッテナム戦に先発してその試合で負傷した選手は該当しない）。"
+            "その出場より後に、再び欠場・離脱が報じられている選手も挙げない。"
+            "予想スタメン（predicted line-up）は根拠にしない。\n"
+            "最後の行に結果だけを書く。選手ごとに「選手名：試合名で先発／途中出場／ベンチ入り（根拠の媒体名とPublished日付）」を"
+            "「 / 」区切りで1行にまとめる。該当者がいなければ最後の行を NONE とする。\n\n"
+            f"--- 負傷・離脱中の選手 ---\n{m.group(1)}\n\n--- ソース ---\n{source_context}"
+        )}],
+    )
+    lines = [l for l in check.content[0].text.strip().splitlines() if l.strip()]
+    found = lines[-1].strip() if lines else ""
+    if not found or "NONE" in found:
+        return content
+    print(f"[rumor] {club_name}: 負傷中としていた選手に出場・ベンチ入りの記録あり → 書き直し\n{found}")
+    fixed = client.messages.create(
+        model=MODEL,
+        max_tokens=10000,
+        system=[{"type": "text", "text": k["system_prompt"], "cache_control": {"type": "ephemeral"}}],
+        messages=[
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": content},
+            {"role": "user", "content": (
+                "確認の結果、次の選手はソースで試合に出場またはベンチ入りしている。"
+                "これらの選手を「負傷・離脱中の選手」から外して「復帰した選手」に移し、"
+                "「はじめに」「戦力への影響」「今後の注目点」の記述も合わせて直した記事の全文を、同じ出力フォーマットで出力すること。\n\n"
+                f"{found}"
+            )},
+        ],
+    )
+    text = fixed.content[0].text
+    return text if re.search(r"^# ", text, flags=re.MULTILINE) else content
+
+
 def generate_rumor_article(
     club: dict,
     articles: list,
@@ -293,6 +341,9 @@ def generate_rumor_article(
     if "SKIP_NO_NEW_FACTS" in content and not has_title_line:
         print(f"[rumor] {club['name']}: 新しい動きなし → 更新しない")
         return GeneratedArticle(title="", content="SKIP_NO_NEW_FACTS", sources=search_results)
+
+    if kind == "injuries" and has_title_line:
+        content = _fix_returned_players(client, k, user_message, content, source_context, club["name"])
 
     content = _remove_meta_comments(content)
     content, meta_description = _extract_seo_meta(content)
