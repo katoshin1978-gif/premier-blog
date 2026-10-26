@@ -198,7 +198,9 @@ def generate_rumor_article(
     content = _normalize_player_names(content)
     # 検索評価を1つのURL・タイトルに集めるため、AIがタイトルを変えても固定タイトルに戻す
     content, n = re.subn(r"^# .*$", f"# {club['title']}", content, count=1, flags=re.MULTILINE)
-    if n == 0 or "## 獲得の噂" not in content or is_too_short(content, config, "rumor"):
+    # 処分で主力流出が話題のクラブ等は放出の噂だけになることもあるため、どちらかの節があればよい
+    has_rumor_section = "## 獲得の噂" in content or "## 放出の噂" in content
+    if n == 0 or not has_rumor_section or is_too_short(content, config, "rumor"):
         print(f"[rumor] {club['name']}: フォーマット不正/内容不足 → スキップ")
         print(f"[rumor] AI応答冒頭: {content.strip().replace(chr(10), ' ')[:300]}")
         return GeneratedArticle(title="", content="SKIP_LOW_QUALITY", sources=search_results)
@@ -223,7 +225,7 @@ def run_rumor_roundups(
     clubs = rumor_cfg.get("clubs", [])
     if not clubs:
         return 0
-    interval = rumor_cfg.get("update_interval_days", 2)
+    interval = rumor_cfg.get("update_interval_days", 7)
     cat_map = cfg.get("wordpress", {}).get("category_ids", {})
     init_rumor_table(conn)
     done = 0

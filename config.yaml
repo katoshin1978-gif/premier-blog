@@ -93,7 +93,7 @@ topic_sagas:
 topic_rumors:
   # クラブ別の移籍噂まとめ記事。クラブごとに1本の記事を update_interval_days ごとに最新の噂で書き直す
   # （初回は下書き投稿。タイトル・スラッグは固定して検索評価を1つのURLに集める）
-  update_interval_days: 2
+  update_interval_days: 7
   clubs:
   - key: man-utd
     name: マンチェスター・ユナイテッド
@@ -115,6 +115,46 @@ topic_rumors:
     - Arsenal transfer rumours
     - Arsenal transfer news target bid
     - Arsenal paper talk gossip
+  - key: liverpool
+    name: リバプール
+    title: リバプール移籍噂まとめ｜補強候補・放出候補の最新情報
+    slug: liverpool-transfer-rumours
+    categories: [transfers]
+    image_query: Anfield Liverpool
+    queries:
+    - Liverpool transfer rumours
+    - Liverpool transfer news target bid
+    - Liverpool paper talk gossip
+  - key: chelsea
+    name: チェルシー
+    title: チェルシー移籍噂まとめ｜補強候補・放出候補の最新情報
+    slug: chelsea-transfer-rumours
+    categories: [transfers]
+    image_query: Stamford Bridge Chelsea
+    queries:
+    - Chelsea transfer rumours
+    - Chelsea transfer news target bid
+    - Chelsea paper talk gossip
+  - key: man-city
+    name: マンチェスター・シティ
+    title: マンC移籍噂まとめ｜補強候補・放出候補の最新情報
+    slug: man-city-transfer-rumours
+    categories: [transfers]
+    image_query: Etihad Stadium Manchester City
+    queries:
+    - Manchester City transfer rumours
+    - Manchester City transfer news target bid
+    - Man City paper talk gossip
+  - key: tottenham
+    name: トッテナム
+    title: トッテナム移籍噂まとめ｜補強候補・放出候補の最新情報
+    slug: tottenham-transfer-rumours
+    categories: [transfers]
+    image_query: Tottenham Hotspur Stadium
+    queries:
+    - Tottenham transfer rumours
+    - Tottenham transfer news target bid
+    - Spurs paper talk gossip
 topic_europe:
   nitter_accounts:
   - FabrizioRomano
