@@ -897,6 +897,7 @@ def publish_draft(
     category_id: int | None = None,  # 後方互換
     meta_description: str = "",
     update_post_id: int | None = None,
+    slug: str | None = None,
 ) -> PublishResult:
     """記事を下書き投稿する。update_post_id 指定時は既存記事を上書き更新する
     （ステータス・カテゴリ・アイキャッチは既存のまま。旧版は WordPress のリビジョンに残る）"""
@@ -936,6 +937,8 @@ def publish_draft(
         payload["status"] = status
         if category_ids:
             payload["categories"] = category_ids
+        if slug:
+            payload["slug"] = slug
     if featured_media_id:
         payload["featured_media"] = featured_media_id
 

@@ -37,6 +37,7 @@ python synthesizer.py          # スタブデータで動作確認
 python publisher.py            # テスト記事を下書き投稿
 python image_fetcher.py "Bruno Fernandes Manchester United"
 python score_updater.py        # スコアティッカーを手動更新
+python rumor_roundup.py --dry-run  # 移籍噂まとめ記事を生成のみ（--dry-run なしで投稿・更新）
 ```
 
 ## Architecture
@@ -60,6 +61,7 @@ topic_finder → researcher → fetcher → synthesizer → publisher
 - **メイン**（PL全般・Man United）: `find_topics()` → 通常パイプライン
 - **移籍**（Man United以外）: `find_topics_transfers()` → `force_category="transfers"`
 - **欧州**（PL以外の欧州リーグ）: `find_topics_europe()` → `force_category="europe"`
+- **移籍噂まとめ**: `rumor_roundup.py` がクラブ別（`config.yaml: topic_rumors.clubs`）に1本の記事を持ち、`update_interval_days`（2日）ごとに最新の噂で同じ記事を書き直す。タイトル・スラッグ固定。記事IDは `processed.db` の `rumor_posts` テーブル。新しい動きがなければ更新しない
 - **試合分析**: `match_analyzer.py` が直近5日間の完了試合を football-data.org から取得して戦術分析記事を生成
 
 **付属モジュール：**

@@ -885,6 +885,18 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
                 print(f"[main] ロングテール記事エラー: {e}")
         print(f"[main] ロングテール記事完了: {longtail_success}/{count_longtail} 件")
 
+    # ===== クラブ別 移籍噂まとめ記事（同じ記事を定期更新） =====
+    if not topic_override:
+        try:
+            from rumor_roundup import run_rumor_roundups
+            print("\n" + "=" * 60)
+            print("[main] 移籍噂まとめ記事を確認します")
+            print("=" * 60)
+            extra_success += run_rumor_roundups(conn, cfg, dry_run=dry_run, config_path=CONFIG_PATH)
+        except Exception as e:
+            _raise_if_credit_error(e)
+            print(f"[main] 移籍噂まとめ記事エラー（続行）: {e}")
+
     # 試合分析記事（dry_run 時はスキップ）
     if not dry_run:
         try:

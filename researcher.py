@@ -50,6 +50,7 @@ _MAN_UNITED_KEYWORDS = [
 _MAN_UNITED_EXTRA_DOMAINS = [
     "manchestereveningnews.co.uk",
     "metro.co.uk",
+    "centredevils.co.uk",
 ]
 
 
