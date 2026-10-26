@@ -521,6 +521,52 @@ def generate_article(
     return GeneratedArticle(title=title, content=content, sources=search_results, meta_description=meta_description)
 
 
+# 同一ストーリー判定用（タイトル照合だけなので軽量モデルで十分）
+STORY_MATCH_MODEL = "claude-haiku-4-5-20251001"
+
+
+def find_same_story(topic: str, recent_posts: list[tuple[int, str]]) -> int | None:
+    """トピックが直近記事のどれかと同じストーリー（同じ出来事・続いている騒動）なら、その記事IDを返す。
+    recent_posts: (記事ID, 元トピックのタイトル群) のリスト。該当が複数あれば最新の記事を返す"""
+    if not recent_posts:
+        return None
+    listing = "\n".join(f"[{pid}] {titles}" for pid, titles in recent_posts)
+    user_message = (
+        "サッカーニュースブログで、同じ話題の記事が何本も並ぶのを防ぎたい。\n"
+        "新しいトピックが、下の既存記事と「同じストーリー」かを判定してください。\n\n"
+        "【同じストーリーとみなす例】\n"
+        "- 同じ監督の解任危機・後任候補の報道（新たな敗戦で圧力が強まった、別の識者がコメントした、"
+        "新しい候補名が出た等の進展があっても同じストーリー）\n"
+        "- 同じ選手の同じ発言・批判騒動とその反響\n"
+        "- 同じ選手の同じ移籍案件、同じ処分・負傷の続報\n"
+        "【別ストーリーとみなす例】\n"
+        "- 同じクラブ・同じ人物でも出来事が違う（例: 監督の解任危機と、選手の負傷情報）\n"
+        "- 別の試合のレビュー・プレビュー、別の選手の移籍、移籍市場全体のまとめ記事\n"
+        "- 同じクラブが登場するだけ、試合内容が似ているだけ\n"
+        "- 「Transfer rumors, news:」「Papers:」「[アカウント名]」等の定型の前置きや媒体名が同じだけ\n"
+        "誤って統合すると無関係な記事が書き換わるため、中心人物と出来事が一致しないものは含めない。\n\n"
+        f"新しいトピック: {topic}\n\n"
+        f"既存記事（[記事ID] 元トピックのタイトル）:\n{listing}\n\n"
+        "出力形式（2行のみ）:\n"
+        "1行目: 新しいトピックの中心人物と出来事\n"
+        "2行目: 同じストーリーの記事IDの数字をすべてカンマ区切りで。なければ NONE"
+    )
+    http_client = httpx.Client(verify=_SSL_VERIFY) if not _SSL_VERIFY else None
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], http_client=http_client)
+    response = client.messages.create(
+        model=STORY_MATCH_MODEL,
+        max_tokens=300,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    lines = [l for l in response.content[0].text.strip().splitlines() if l.strip()]
+    if not lines or "NONE" in lines[-1]:
+        return None
+    # 一覧にないIDは誤判定として捨てる。記事IDは投稿順に増えるので最大値＝最新
+    valid = {p for p, _ in recent_posts}
+    ids = [int(x) for x in re.findall(r"\d+", lines[-1]) if int(x) in valid]
+    return max(ids) if ids else None
+
+
 def generate_update_article(
     topic: str,
     existing_title: str,

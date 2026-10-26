@@ -68,7 +68,7 @@ topic_finder → researcher → fetcher → synthesizer → publisher
 
 **重複防止：** `processed.db`（SQLite）がトピックハッシュと試合IDを記録し、再実行時にスキップ。
 
-**同一選手の続報は既存記事を更新：** `main.py:decide_player_action()` が `player_dedup` テーブルから直近 `article.update_window_days`（30日）以内の同じ選手の記事IDを探し、あれば `synthesizer.py:generate_update_article()` で続報を統合（冒頭に【M月D日更新】、「## これまでの経緯」に時系列）して同じ記事IDに上書き保存する。公開済み記事も公開のまま更新（旧版はWPリビジョンに残る）。AIが「新事実なし」なら更新しない、「別の案件」なら新規記事に回す。記事IDの記録がない重複は `article.player_dedup_days`（7日）スキップ。本文が `article.min_body_chars`（1500字）未満の記事は投稿しない。
+**同一選手の続報は既存記事を更新：** `main.py:decide_player_action()` が `player_dedup` テーブルから直近 `article.update_window_days`（30日）以内の同じ選手の記事IDを探し、あれば `synthesizer.py:generate_update_article()` で続報を統合（冒頭に【M月D日更新】、「## これまでの経緯」に時系列）して同じ記事IDに上書き保存する。公開済み記事も公開のまま更新（旧版はWPリビジョンに残る）。AIが「新事実なし」なら更新しない、「別の案件」なら新規記事に回す。記事IDの記録がない重複は `article.player_dedup_days`（7日）スキップ。選手名で既存記事が見つからない場合も、`main.py:find_story_post()` → `synthesizer.py:find_same_story()`（Haiku）が直近 `article.story_match_days`（14日）の記事タイトルと照合し、同じストーリー（監督の解任危機・発言騒動など言い回しの違う同じ話題）なら同じく既存記事を続報更新する。同じ実行内で更新済みの記事に当たったトピックはスキップ。本文が `article.min_body_chars`（1500字）未満の記事は投稿しない。
 
 ## Key Constraints
 

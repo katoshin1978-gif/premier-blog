@@ -31,7 +31,7 @@ from publisher import (
     upload_media,
 )
 from researcher import SearchResult, _is_article_url, is_whitelisted, search_articles
-from synthesizer import generate_article, generate_update_article
+from synthesizer import find_same_story, generate_article, generate_update_article
 from topic_finder import (
     Topic,
     extract_player_name,
@@ -252,6 +252,36 @@ def decide_player_action(conn: sqlite3.Connection, player_key: str | None, cfg: 
     if is_player_processed_recently(conn, player_key, art_cfg.get("player_dedup_days", 7)):
         return "skip", None
     return "new", None
+
+
+def recent_story_posts(conn: sqlite3.Connection, days: int) -> list[tuple[int, str]]:
+    """直近 days 日以内に記事化したトピックを記事ID単位でまとめて返す（同一ストーリー判定の照合先）"""
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        "SELECT wp_post_id, topic_title FROM processed_topics "
+        "WHERE created_at >= ? AND wp_post_id > 0 ORDER BY created_at",
+        (cutoff,),
+    ).fetchall()
+    posts: dict[int, list[str]] = {}
+    for pid, title in rows:
+        # 改行入りのツイート本文などは1行目だけで判定には十分
+        posts.setdefault(pid, []).append(title.splitlines()[0][:150])
+    return [(pid, " / ".join(titles)) for pid, titles in posts.items()]
+
+
+def find_story_post(conn: sqlite3.Connection, title: str, cfg: dict) -> int | None:
+    """言い回しの違う同じ話題（監督の解任危機・発言騒動など）の既存記事IDを返す。
+    選手名キーで拾えない重複を AI のタイトル照合で補う"""
+    days = cfg.get("article", {}).get("story_match_days", 14)
+    try:
+        pid = find_same_story(title, recent_story_posts(conn, days))
+    except Exception as e:
+        _raise_if_credit_error(e)
+        print(f"[main] 同一ストーリー判定失敗（新規扱いで続行）: {e}")
+        return None
+    if pid:
+        print(f"[main] 同一ストーリーの既存記事あり: ID={pid} — {title}")
+    return pid
 
 
 def get_analyzed_match_ids(conn: sqlite3.Connection) -> set[int]:
@@ -620,12 +650,24 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             return "skip", None
         return action, pid
 
+    def _resolve_action(t: Topic, key: str | None) -> tuple[str, int | None]:
+        # 選手名で既存記事が見つからなければ、言い回しの違う同じ話題の記事を探して更新対象にする
+        action, pid = _player_action(key)
+        if action != "new":
+            return action, pid
+        pid = find_story_post(conn, t.title, cfg)
+        if not pid:
+            return "new", None
+        if pid in updated_ids:
+            return "skip", None
+        return "update", pid
+
     def _record_player(key: str | None, pipeline: str, action: str, post_id: int) -> None:
+        if action == "update" and post_id:
+            updated_ids.add(post_id)
         if not key:
             return
         mark_player_processed(conn, key, pipeline, post_id or None)
-        if action == "update" and post_id:
-            updated_ids.add(post_id)
 
     if not topic_override:
         filtered = []
@@ -663,7 +705,10 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
         used_urls.update(r.url for r in search_results)
         print(f"[main] 採用トピック: {topic.title}")
         main_key = _main_player_key(topic)
-        action, target_id = _player_action(main_key)
+        action, target_id = _resolve_action(topic, main_key)
+        if action == "skip":
+            print(f"[main] 同じ実行内で更新済みの話題のためスキップ: {topic.title}")
+            continue
 
         try:
             post_id = _post_article(topic, articles, search_results, dry_run, conn, cfg, update_post_id=target_id)
@@ -704,9 +749,9 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
 
             # 直近に同じ選手の記事があれば既存記事を更新、記事IDが無ければスキップ（パイプライン横断）
             player_key = topic_player_key(topic.title)
-            action, target_id = _player_action(player_key)
+            action, target_id = _resolve_action(topic, player_key)
             if action == "skip":
-                print(f"[main] 移籍: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
+                print(f"[main] 移籍: 重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] 移籍採用トピック: {topic.title}")
@@ -746,9 +791,9 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
 
             # パイプライン横断で直近の同選手は既存記事を更新、記事IDが無ければスキップ
             player_key = topic_player_key(topic.title)
-            action, target_id = _player_action(player_key)
+            action, target_id = _resolve_action(topic, player_key)
             if action == "skip":
-                print(f"[main] 欧州: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
+                print(f"[main] 欧州: 重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] 欧州採用トピック: {topic.title}")
@@ -790,9 +835,9 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
             used_hashes.add(topic_hash(topic))
 
             player_key = topic_player_key(topic.title)
-            action, target_id = _player_action(player_key)
+            action, target_id = _resolve_action(topic, player_key)
             if action == "skip":
-                print(f"[main] WC: 選手重複スキップ ({player_key}、直近{dedup_days}日)")
+                print(f"[main] WC: 重複スキップ ({player_key}、直近{dedup_days}日)")
                 continue
 
             print(f"[main] WC採用トピック: {topic.title}")
