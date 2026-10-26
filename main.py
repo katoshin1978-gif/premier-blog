@@ -885,17 +885,18 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
                 print(f"[main] ロングテール記事エラー: {e}")
         print(f"[main] ロングテール記事完了: {longtail_success}/{count_longtail} 件")
 
-    # ===== クラブ別 移籍噂まとめ記事（同じ記事を定期更新） =====
+    # ===== クラブ別 移籍噂・怪我人まとめ記事（同じ記事を定期更新） =====
     if not topic_override:
         try:
             from rumor_roundup import run_rumor_roundups
             print("\n" + "=" * 60)
-            print("[main] 移籍噂まとめ記事を確認します")
+            print("[main] 移籍噂・怪我人まとめ記事を確認します")
             print("=" * 60)
             extra_success += run_rumor_roundups(conn, cfg, dry_run=dry_run, config_path=CONFIG_PATH)
+            extra_success += run_rumor_roundups(conn, cfg, dry_run=dry_run, config_path=CONFIG_PATH, kind="injuries")
         except Exception as e:
             _raise_if_credit_error(e)
-            print(f"[main] 移籍噂まとめ記事エラー（続行）: {e}")
+            print(f"[main] 噂・怪我人まとめ記事エラー（続行）: {e}")
 
     # 試合分析記事（dry_run 時はスキップ）
     if not dry_run:
@@ -979,7 +980,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Premier League 自動ブログ投稿")
     parser.add_argument("--dry-run", action="store_true", help="WordPress に投稿せずに記事内容を確認")
     parser.add_argument("--topic", type=str, default=None, help="テーマを直接指定")
-    parser.add_argument("--count", type=int, default=5, help="生成する記事数（デフォルト: 5）")
+    parser.add_argument("--count", type=int, default=3, help="生成する記事数（デフォルト: 3）")
     args = parser.parse_args()
 
     try:

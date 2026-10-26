@@ -99,6 +99,8 @@ topic_rumors:
     name: マンチェスター・ユナイテッド
     title: マンU移籍噂まとめ｜補強候補・放出候補の最新情報
     slug: man-utd-transfer-rumours
+    # 記事のタイトル・冒頭にこの語があれば、関連記事欄にこの噂まとめへのリンクを入れる
+    match: [マンチェスター・ユナイテッド, マン・ユナイテッド, マンU, Manchester United, Man Utd]
     categories: [transfers, united]
     image_query: Old Trafford Manchester United
     queries:
@@ -109,6 +111,8 @@ topic_rumors:
     name: アーセナル
     title: アーセナル移籍噂まとめ｜補強候補・放出候補の最新情報
     slug: arsenal-transfer-rumours
+    # 記事のタイトル・冒頭にこの語があれば、関連記事欄にこの噂まとめへのリンクを入れる
+    match: [アーセナル, Arsenal]
     categories: [transfers]
     image_query: Emirates Stadium Arsenal
     queries:
@@ -119,6 +123,8 @@ topic_rumors:
     name: リバプール
     title: リバプール移籍噂まとめ｜補強候補・放出候補の最新情報
     slug: liverpool-transfer-rumours
+    # 記事のタイトル・冒頭にこの語があれば、関連記事欄にこの噂まとめへのリンクを入れる
+    match: [リバプール, Liverpool]
     categories: [transfers]
     image_query: Anfield Liverpool
     queries:
@@ -129,6 +135,8 @@ topic_rumors:
     name: チェルシー
     title: チェルシー移籍噂まとめ｜補強候補・放出候補の最新情報
     slug: chelsea-transfer-rumours
+    # 記事のタイトル・冒頭にこの語があれば、関連記事欄にこの噂まとめへのリンクを入れる
+    match: [チェルシー, Chelsea]
     categories: [transfers]
     image_query: Stamford Bridge Chelsea
     queries:
@@ -139,6 +147,8 @@ topic_rumors:
     name: マンチェスター・シティ
     title: マンC移籍噂まとめ｜補強候補・放出候補の最新情報
     slug: man-city-transfer-rumours
+    # 記事のタイトル・冒頭にこの語があれば、関連記事欄にこの噂まとめへのリンクを入れる
+    match: [マンチェスター・シティ, マン・シティ, マンC, Manchester City, Man City]
     categories: [transfers]
     image_query: Etihad Stadium Manchester City
     queries:
@@ -149,12 +159,84 @@ topic_rumors:
     name: トッテナム
     title: トッテナム移籍噂まとめ｜補強候補・放出候補の最新情報
     slug: tottenham-transfer-rumours
+    # 記事のタイトル・冒頭にこの語があれば、関連記事欄にこの噂まとめへのリンクを入れる
+    match: [トッテナム, スパーズ, Tottenham, Spurs]
     categories: [transfers]
     image_query: Tottenham Hotspur Stadium
     queries:
     - Tottenham transfer rumours
     - Tottenham transfer news target bid
     - Spurs paper talk gossip
+topic_injuries:
+  # クラブ別の怪我人情報まとめ記事。仕組みは topic_rumors と同じ（「〇〇 怪我」検索向け）
+  update_interval_days: 7
+  clubs:
+  - key: man-utd
+    name: マンチェスター・ユナイテッド
+    title: マンU怪我人情報まとめ｜負傷者・復帰時期の最新情報
+    slug: man-utd-injury-news
+    categories: [united]
+    image_query: Old Trafford Manchester United
+    match: [マンチェスター・ユナイテッド, マン・ユナイテッド, マンU, Manchester United, Man Utd]
+    queries:
+    - Manchester United injury news
+    - Manchester United team news injury update
+    - Man Utd injury return date
+  - key: arsenal
+    name: アーセナル
+    title: アーセナル怪我人情報まとめ｜負傷者・復帰時期の最新情報
+    slug: arsenal-injury-news
+    categories: [data]
+    image_query: Emirates Stadium Arsenal
+    match: [アーセナル, Arsenal]
+    queries:
+    - Arsenal injury news
+    - Arsenal team news injury update
+    - Arsenal injury return date
+  - key: liverpool
+    name: リバプール
+    title: リバプール怪我人情報まとめ｜負傷者・復帰時期の最新情報
+    slug: liverpool-injury-news
+    categories: [data]
+    image_query: Anfield Liverpool
+    match: [リバプール, Liverpool]
+    queries:
+    - Liverpool injury news
+    - Liverpool team news injury update
+    - Liverpool injury return date
+  - key: chelsea
+    name: チェルシー
+    title: チェルシー怪我人情報まとめ｜負傷者・復帰時期の最新情報
+    slug: chelsea-injury-news
+    categories: [data]
+    image_query: Stamford Bridge Chelsea
+    match: [チェルシー, Chelsea]
+    queries:
+    - Chelsea injury news
+    - Chelsea team news injury update
+    - Chelsea injury return date
+  - key: man-city
+    name: マンチェスター・シティ
+    title: マンC怪我人情報まとめ｜負傷者・復帰時期の最新情報
+    slug: man-city-injury-news
+    categories: [data]
+    image_query: Etihad Stadium Manchester City
+    match: [マンチェスター・シティ, マン・シティ, マンC, Manchester City, Man City]
+    queries:
+    - Manchester City injury news
+    - Manchester City team news injury update
+    - Man City injury return date
+  - key: tottenham
+    name: トッテナム
+    title: トッテナム怪我人情報まとめ｜負傷者・復帰時期の最新情報
+    slug: tottenham-injury-news
+    categories: [data]
+    image_query: Tottenham Hotspur Stadium
+    match: [トッテナム, スパーズ, Tottenham, Spurs]
+    queries:
+    - Tottenham injury news
+    - Tottenham team news injury update
+    - Spurs injury return date
 topic_europe:
   nitter_accounts:
   - FabrizioRomano
@@ -171,7 +253,8 @@ topic_europe:
   limit: 15
   count: 2
 topic_longtail:
-  count: 1
+  # 定番ネタ（歴代記録・ルール解説）は安定してクリックが取れるため1日2本
+  count: 2
   groups:
   - category: united
     themes:
@@ -221,6 +304,20 @@ topic_longtail:
     - プレミアリーグ ゴールデングローブ 歴代受賞者一覧
     - プレミアリーグ 通算100ゴール達成選手一覧
     - プレミアリーグ 平均観客動員数 クラブ別ランキング
+    - アーセナル 歴代得点王
+    - アーセナル インヴィンシブルズ 無敗優勝の軌跡
+    - リバプール 歴代監督一覧と成績
+    - リバプール チャンピオンズリーグ優勝の歴史
+    - チェルシー 歴代監督一覧と在任期間
+    - マンチェスターシティ 歴代得点王
+    - マンチェスターシティ プレミアリーグ優勝シーズン一覧
+    - トッテナム 歴代得点王
+    - ノースロンドンダービー 通算成績
+    - マージーサイドダービー 通算成績
+    - プレミアリーグ 歴代最多退場選手ランキング
+    - プレミアリーグ 最年長出場・最年長得点記録
+    - プレミアリーグ 1試合最多得点記録
+    - プレミアリーグ 各クラブのユニフォームサプライヤー一覧
   - category: column
     themes:
     - サッカー VAR判定の基準を分かりやすく解説
@@ -243,6 +340,17 @@ topic_longtail:
     - サッカー xG（ゴール期待値）とは 見方と使い方
     - イングランドサッカー リーグピラミッドの仕組み 昇格と降格
     - サッカー 偽サイドバックとは 役割と代表的な選手
+    - サッカー アディショナルタイムの決め方
+    - プレミアリーグ イエローカード累積による出場停止のルール
+    - サッカー ローン移籍の仕組み 買取オプションとは
+    - サッカー ボスマン判決とは フリートランスファーの仕組み
+    - プレミアリーグ ホームグロウン選手制度とは 登録ルール
+    - プレミアリーグ 労働許可証（GBE）とは 移籍の条件
+    - サッカー インバーテッドウィンガーとは 役割と代表的な選手
+    - サッカー 3バックと4バックの違い
+    - サッカー ハイプレスとミドルブロックの違い
+    - サッカー 1月の移籍市場 冬の補強が難しい理由
+    - サッカー アンカーとボランチの違い
 topic_worldcup:
   # この期間内のみパイプラインを実行する（大会終了後に旧スカッド記事等が
   # 延々と再生成されるのを防ぐ）。次の大会（欧州選手権・W杯等）が近づいたら

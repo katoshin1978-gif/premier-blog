@@ -23,10 +23,10 @@ venv\Scripts\activate
 pip install -r requirements.txt
 
 # 実行
-python main.py                                # 通常実行（5記事生成 + WP下書き投稿）
+python main.py                                # 通常実行（メイン3記事生成 + WP下書き投稿）
 python main.py --dry-run                      # 投稿せず記事内容を確認
 python main.py --topic "任意のトピック"        # テーマを直接指定
-python main.py --count 3                      # 生成記事数を変更（デフォルト: 5）
+python main.py --count 5                      # 生成記事数を変更（デフォルト: 3）
 python main.py --dry-run --topic "Arsenal transfer"
 
 # 各モジュール単体実行（デバッグ用）
@@ -38,6 +38,7 @@ python publisher.py            # テスト記事を下書き投稿
 python image_fetcher.py "Bruno Fernandes Manchester United"
 python score_updater.py        # スコアティッカーを手動更新
 python rumor_roundup.py --dry-run  # 移籍噂まとめ記事を生成のみ（--dry-run なしで投稿・更新）
+python rumor_roundup.py --kind injuries --club man-utd --dry-run  # 怪我人まとめ・クラブ指定（--force で更新間隔を無視）
 ```
 
 ## Architecture
@@ -61,7 +62,7 @@ topic_finder → researcher → fetcher → synthesizer → publisher
 - **メイン**（PL全般・Man United）: `find_topics()` → 通常パイプライン
 - **移籍**（Man United以外）: `find_topics_transfers()` → `force_category="transfers"`
 - **欧州**（PL以外の欧州リーグ）: `find_topics_europe()` → `force_category="europe"`
-- **移籍噂まとめ**: `rumor_roundup.py` がクラブ別（`config.yaml: topic_rumors.clubs`）に1本の記事を持ち、`update_interval_days`（7日）ごとに最新の噂で同じ記事を書き直す。タイトル・スラッグ固定。記事IDは `processed.db` の `rumor_posts` テーブル。新しい動きがなければ更新しない
+- **移籍噂まとめ**: `rumor_roundup.py` がクラブ別（`config.yaml: topic_rumors.clubs`）に1本の記事を持ち、`update_interval_days`（7日）ごとに最新の噂で同じ記事を書き直す。タイトル・スラッグ固定。記事IDは `processed.db` の `rumor_posts` テーブル。新しい動きがなければ更新しない。同じ仕組みで `topic_injuries` のクラブ別怪我人まとめ（`--kind injuries`、DBキーは `injuries:クラブキー`）も持つ。各記事の関連記事欄には、登場するBig6クラブの噂まとめ（怪我の話題なら怪我人まとめ）へのリンクが自動で入る（`publisher.py:_find_rumor_links()`）
 - **試合分析**: `match_analyzer.py` が直近5日間の完了試合を football-data.org から取得して戦術分析記事を生成
 
 **付属モジュール：**

@@ -790,13 +790,65 @@ def insert_mid_article_affiliate(html: str, card_html: str) -> str:
     return html[:insert_at] + block + html[insert_at:]
 
 
+# まとめ記事のスラッグ → (リンク, タイトル, ID)。公開済みのものだけ。1回の実行中はキャッシュする
+_rumor_link_cache: dict[str, tuple[str, str, int] | None] = {}
+
+
+# 怪我の話題の記事には噂まとめではなく怪我人まとめへのリンクを入れる
+_INJURY_WORDS = ("怪我", "負傷", "離脱", "欠場", "復帰", "injury", "injured")
+
+
+def _lookup_published_slug(ip_base_url: str, host_header: dict, slug: str) -> tuple[str, str, int] | None:
+    if slug not in _rumor_link_cache:
+        _rumor_link_cache[slug] = None
+        try:
+            resp = requests.get(
+                f"{ip_base_url}/wp-json/wp/v2/posts",
+                params={"slug": slug, "_fields": "id,link,title"},
+                headers=host_header, timeout=15, verify=_SSL_VERIFY,
+            )
+            found = resp.json() if resp.ok else []
+            if found:
+                _rumor_link_cache[slug] = (found[0]["link"], found[0]["title"]["rendered"], found[0]["id"])
+        except Exception as e:
+            print(f"[publisher] まとめ記事の取得失敗（続行）: {e}")
+    return _rumor_link_cache[slug]
+
+
+def _find_rumor_links(
+    ip_base_url: str, host_header: dict, config: dict, text: str, exclude_id: int,
+) -> list[tuple[str, str]]:
+    """記事に登場するBig6クラブのまとめ記事（公開済み）へのリンクを最大2件返す。
+    怪我の話題なら怪我人まとめを優先し、なければ移籍噂まとめにする"""
+    injury_topic = any(w in text for w in _INJURY_WORDS)
+    kinds = ["topic_injuries", "topic_rumors"] if injury_topic else ["topic_rumors"]
+    links = []
+    for club in config.get("topic_rumors", {}).get("clubs", []):
+        if len(links) >= 2:
+            break
+        if not any(kw in text for kw in club.get("match", [])):
+            continue
+        for kind in kinds:
+            target = next((c for c in config.get(kind, {}).get("clubs", []) if c["key"] == club["key"]), None)
+            hit = _lookup_published_slug(ip_base_url, host_header, target["slug"]) if target else None
+            # まとめ記事自身の更新時は自分へのリンクを入れない
+            if hit and hit[2] != exclude_id:
+                links.append((hit[0], hit[1]))
+                break
+    return links
+
+
 def _build_related_html(
     posts: list[dict],
     data_room_url: str = "",
     category_archive_url: str = "",
     category_label: str = "",
+    rumor_links: list[tuple[str, str]] | None = None,
 ) -> str:
     items = "".join(
+        f'<li><a href="{link}">{title}</a></li>' for link, title in (rumor_links or [])
+    )
+    items += "".join(
         f'<li><a href="{p["link"]}">{p["title"]["rendered"]}</a></li>'
         for p in posts
     )
@@ -986,7 +1038,12 @@ def publish_draft(
         category_archive_url = f"{base_url}/category/{primary_slug}/" if primary_slug else ""
         category_label = _CATEGORY_LABELS.get(primary_slug, "")
         data_room_url = f"{base_url}/data-room/"
-        related_html = _build_related_html(related, data_room_url, category_archive_url, category_label)
+        rumor_links = _find_rumor_links(
+            ip_base_url, host_header, config, f"{title} {_plain}", result.post_id
+        )
+        related_html = _build_related_html(
+            related, data_room_url, category_archive_url, category_label, rumor_links
+        )
         suffix = ""
         if affiliate_html:
             suffix += "\n" + affiliate_html
@@ -1009,6 +1066,8 @@ def publish_draft(
                     parts.append("アフィリエイト(末尾)")
                 if related_html:
                     parts.append(f"関連記事{len(related)}件")
+                if rumor_links:
+                    parts.append(f"噂まとめリンク{len(rumor_links)}件")
                 print(f"[publisher] {' / '.join(parts)} 挿入完了")
             except Exception as e:
                 print(f"[publisher] 末尾挿入失敗（続行）: {e}")
