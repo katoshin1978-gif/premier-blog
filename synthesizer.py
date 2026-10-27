@@ -541,12 +541,15 @@ def find_same_story(topic: str, recent_posts: list[tuple[int, str]]) -> int | No
         "新しい候補名が出た等の進展があっても同じストーリー）\n"
         "- 同じ選手の同じ発言・批判騒動とその反響\n"
         "- 同じ選手の同じ移籍案件、同じ処分・負傷の続報\n"
+        "- 1回きりの同じ出来事を別の人物の視点で書いたもの（例: バロンドール等の個人賞の発表で"
+        "「ケインが受賞」と「エムバペが受賞を逃す」、同じ試合の勝者側と敗者側の記事）\n"
         "【別ストーリーとみなす例】\n"
         "- 同じクラブ・同じ人物でも出来事が違う（例: 監督の解任危機と、選手の負傷情報）\n"
         "- 別の試合のレビュー・プレビュー、別の選手の移籍、移籍市場全体のまとめ記事\n"
         "- 同じクラブが登場するだけ、試合内容が似ているだけ\n"
         "- 「Transfer rumors, news:」「Papers:」「[アカウント名]」等の定型の前置きや媒体名が同じだけ\n"
-        "誤って統合すると無関係な記事が書き換わるため、中心人物と出来事が一致しないものは含めない。\n\n"
+        "誤って統合すると無関係な記事が書き換わるため、中心人物と出来事が一致しないものは含めない"
+        "（上記の1回きりの同じ出来事は除く）。\n\n"
         f"新しいトピック: {topic}\n\n"
         f"既存記事（[記事ID] 元トピックのタイトル）:\n{listing}\n\n"
         "出力形式（2行のみ）:\n"
@@ -659,6 +662,7 @@ def generate_update_article(
         print(f"[synthesizer] 続報に新事実なし → 更新しない: topic='{topic}'")
         return GeneratedArticle(title="", content="SKIP_NO_NEW_FACTS", sources=search_results)
 
+    content = _strip_preamble(content)
     content = _remove_meta_comments(content)
     content, meta_description = _extract_seo_meta(content)
     content = _normalize_player_names(content)
@@ -736,6 +740,13 @@ def _extract_seo_meta(content: str) -> tuple[str, str]:
         cleaned = content[:match.start()].rstrip()
         return cleaned, seo_desc
     return content, ""
+
+
+def _strip_preamble(markdown: str) -> str:
+    """「# タイトル」行より前の文章（新事実の判定理由などの思考メモ）を除去する。
+    残すとそのまま記事冒頭に公開されてしまう"""
+    m = re.search(r"^# ", markdown, flags=re.MULTILINE)
+    return markdown[m.start():] if m else markdown
 
 
 def _extract_title(markdown: str) -> str | None:
