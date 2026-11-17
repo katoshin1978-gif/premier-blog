@@ -34,6 +34,7 @@ from researcher import SearchResult, _is_article_url, is_whitelisted, search_art
 from synthesizer import find_same_story, generate_article, generate_update_article
 from topic_finder import (
     Topic,
+    exclude_womens_football,
     extract_player_name,
     is_commentary_title,
     find_topics,
@@ -622,7 +623,7 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
     if topic_override:
         candidate_topics = [Topic(title=topic_override)] * count
     else:
-        topics = find_topics(CONFIG_PATH)
+        topics = exclude_womens_football(find_topics(CONFIG_PATH))
         unprocessed = [t for t in topics if not is_processed(conn, t)]
         if not unprocessed:
             print("[main] 新規トピックなし（全て処理済み）")
@@ -732,7 +733,7 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
         print("\n" + "=" * 60)
         print(f"[main] 移籍記事を {count_transfers} 件生成します（MU以外）")
         print("=" * 60)
-        transfer_topics = find_topics_transfers(CONFIG_PATH)
+        transfer_topics = exclude_womens_football(find_topics_transfers(CONFIG_PATH))
         transfer_unprocessed = [t for t in transfer_topics if not is_processed(conn, t) and topic_hash(t) not in used_hashes]
         transfer_success = 0
         for i in range(count_transfers):
@@ -774,7 +775,7 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
         print("\n" + "=" * 60)
         print(f"[main] 欧州記事を {count_europe} 件生成します（PL以外）")
         print("=" * 60)
-        europe_topics = find_topics_europe(CONFIG_PATH)
+        europe_topics = exclude_womens_football(find_topics_europe(CONFIG_PATH))
         europe_unprocessed = [t for t in europe_topics if not is_processed(conn, t) and topic_hash(t) not in used_hashes]
         europe_success = 0
         for i in range(count_europe):
@@ -820,7 +821,7 @@ def run(dry_run: bool = False, topic_override: str | None = None, count: int = 1
         print(f"[main] WC記事を {count_wc} 件生成します（MU選手のW杯活躍）")
         print("=" * 60)
         from topic_finder import find_topics_worldcup
-        wc_topics = find_topics_worldcup(CONFIG_PATH)
+        wc_topics = exclude_womens_football(find_topics_worldcup(CONFIG_PATH))
         wc_unprocessed = [t for t in wc_topics if not is_processed(conn, t) and topic_hash(t) not in used_hashes]
         wc_success = 0
         for i in range(count_wc):

@@ -99,6 +99,30 @@ _FALSE_POSITIVE_KEYWORDS = [
     "wsl", "women's super league", "fa women", "barclays women", "women's premier league",
 ]
 
+# 女子サッカー判定（記事化しない方針）。英語以外のソース（スペイン語のLiga F等）もすり抜けないよう多言語で判定する
+_WOMENS_FOOTBALL_RE = re.compile(
+    r"\bwomen'?s?\b|\bwsl\b|\bnwsl\b|lionesses|\bliga f\b|femenin[oa]|f[ée]minine?s?\b"
+    r"|\bfrauen|femminile|\bdamallsvenskan\b|\bshe ?believes\b|女子|なでしこ",
+    re.I,
+)
+_WOMENS_FOOTBALL_PATH = re.compile(r"/(women|womens|womens-football|femenino|feminin|frauen|femminile)(/|-|$)", re.I)
+
+
+def is_womens_football(title: str, url: str | None = "") -> bool:
+    """タイトルまたはURLから女子サッカーの話題かを判定する"""
+    return bool(_WOMENS_FOOTBALL_RE.search(title or "")) or bool(_WOMENS_FOOTBALL_PATH.search(url or ""))
+
+
+def exclude_womens_football(topics: list) -> list:
+    """女子サッカーのトピックを除外する（全パイプライン共通の最終フィルタ）"""
+    kept = []
+    for t in topics:
+        if is_womens_football(t.title, t.url):
+            print(f"[topic_finder] 女子サッカーのため除外: {t.title}")
+        else:
+            kept.append(t)
+    return kept
+
 # Nitter インスタンス（複数試行、安定順）
 _NITTER_INSTANCES = [
     "https://xcancel.com",           # US, 高安定
@@ -264,6 +288,8 @@ def _is_pl_football_content(title: str, url: str) -> bool:
     tl = title.lower()
     if any(kw in tl for kw in _FALSE_POSITIVE_KEYWORDS):
         return False
+    if is_womens_football(title, url):
+        return False
     return any(kw in tl for kw in _PL_KEYWORDS)
 
 
@@ -278,6 +304,8 @@ def _is_europe_football(title: str, url: str = "") -> bool:
     tl = title.lower()
     if any(kw in tl for kw in _FALSE_POSITIVE_KEYWORDS):
         return False
+    if is_womens_football(title, url):
+        return False
     return any(kw in tl for kw in _EUROPE_CLUB_KEYWORDS)
 
 
@@ -286,6 +314,8 @@ def _is_global_transfer(title: str, url: str = "") -> bool:
         return False
     tl = title.lower()
     if any(kw in tl for kw in _FALSE_POSITIVE_KEYWORDS):
+        return False
+    if is_womens_football(title, url):
         return False
     return any(kw in tl for kw in _TRANSFER_GLOBAL_KEYWORDS)
 
