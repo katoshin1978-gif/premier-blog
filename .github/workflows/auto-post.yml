@@ -5,6 +5,12 @@ on:
     - cron: '0 22 * * *'  # 毎日 22:00 UTC = 翌日 7:00 JST
   workflow_dispatch:       # 手動実行ボタン
 
+# 同時実行を防ぐ（遅延した schedule と手動実行が重なると processed.db の重複チェックが効かず同じ記事が2本できる）
+# 実行中なら後続は待機させる（キャンセルしない）
+concurrency:
+  group: auto-post
+  cancel-in-progress: false
+
 jobs:
   post:
     runs-on: ubuntu-latest
@@ -39,6 +45,9 @@ jobs:
     steps:
       - name: チェックアウト
         uses: actions/checkout@v4
+        with:
+          # 待機後に開始した実行でも、先行実行が push した最新の processed.db を取得する
+          ref: master
 
       - name: Python 3.11 セットアップ
         uses: actions/setup-python@v5
