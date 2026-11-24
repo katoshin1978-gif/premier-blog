@@ -1,9 +1,11 @@
 name: Premier Blog Auto Post
 
 on:
+  # 本番の起動は Xサーバーの cron（毎朝 7:00 JST）から workflow_dispatch で行う（deploy/xserver/trigger_autopost.sh）
+  # GitHub の schedule は数時間遅れるため、cron が動かなかった日のバックアップとしてのみ残す
   schedule:
-    - cron: '0 22 * * *'  # 毎日 22:00 UTC = 翌日 7:00 JST
-  workflow_dispatch:       # 手動実行ボタン
+    - cron: '0 1 * * *'   # 毎日 01:00 UTC = 10:00 JST（実際は遅延してもっと後になる）
+  workflow_dispatch:       # Xサーバー cron / 手動実行ボタン
 
 # 同時実行を防ぐ（遅延した schedule と手動実行が重なると processed.db の重複チェックが効かず同じ記事が2本できる）
 # 実行中なら後続は待機させる（キャンセルしない）
@@ -12,7 +14,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # バックアップの schedule 実行時、その日（JST）に workflow_dispatch 実行が既にあればスキップ
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: 本日分の実行済みチェック
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # JST 当日 0:00 を UTC に変換
+          since=$(date -u -d "$(TZ=Asia/Tokyo date +%Y-%m-%d) 00:00 +0900" +%Y-%m-%dT%H:%M:%SZ)
+          n=$(gh run list -R "$GITHUB_REPOSITORY" --workflow auto-post.yml --event workflow_dispatch                 --created ">=$since" --json conclusion --jq '[.[] | select(.conclusion != "cancelled")] | length')
+          echo "本日($since 以降)の workflow_dispatch 実行: $n 件"
+          if [ "$n" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   post:
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
